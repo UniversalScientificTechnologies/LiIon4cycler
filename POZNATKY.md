@@ -69,7 +69,7 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 
 - **Kapacita** se počítá sčítáním okamžitého proudu z gauge během vybíjení ze stavu plného nabití. Výsledek souhlasil s `RemainingCapacity()` gauge na 2–3 %.
 - Vybíjení do 3,5 V pod zátěží nevybije článek celý, zůstává podstatná část kapacity. Pro srovnání s katalogovou kapacitou je potřeba vybíjet na 2,5–3,0 V (`--empty`).
-- **DC vnitřní odpor:** během vybíjení se zátěž každých 5 min na ≈ 2 s odpojí a odpor se spočte jako R = (U_off − U_on) / (I_off − I_on). Jde o krátkodobý odpor (DCIR za 1–2 s), do kterého se započítávají i kontakty, vodiče a bočník. Naměřené hodnoty:
+- **DC vnitřní odpor:** během vybíjení se zátěž každých 5 min odpojí a odpor se spočte jako R = (U_off − U_on) / (I_off − I_on). Započítávají se do něj i kontakty, vodiče a bočník. Hodnoty níže jsou z prvních testů, kdy se zátěž odpojovala jen na ≈ 2 s:
 
   | Kanál | Odpor |
   |---|---|
@@ -77,6 +77,12 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
   | ch1 | 109–113 mΩ |
   | ch2 | 100–113 mΩ |
   | ch3 | ≈ 144 mΩ |
+
+- **Délka odpojení zátěže je 3 s** (`--rint-off`, zapisuje se do `results.csv` jako `R_pulse_s`). Po odpojení napětí nejdřív skočí o ohmickou složku a pak ještě pomalu roste, takže naměřený odpor závisí na délce pulzu: 1 s dává nejnižší hodnotu, 10 s (HPPC) nejvyšší.
+  - Gauge aktualizuje hodnoty jednou za sekundu a proud průměruje přes celou sekundu. Hodnota „po 3 s“ tedy pochází z intervalu 2–3 s po odpojení.
+  - Při původních ≈ 2 s kolísala skutečná doba mezi 1 a 2 s, kde se napětí mění nejrychleji. To přidávalo rozptyl a pravděpodobně to způsobilo odlehlé hodnoty 93,9 a 83,5 mΩ na ch2.
+  - Napětí bez zátěže se čte v přesný čas nezávisle na 2s cyklu měření.
+  - Výsledky naměřené s různou délkou pulzu nejsou srovnatelné.
 
 ## Kalibrace měření (prototyp 00A59BFD)
 

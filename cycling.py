@@ -18,9 +18,11 @@ Sequence (each cell independently, runs once):
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
   DISCHARGE2  load ON until U <= --empty -> measured capacity (integrated current) and energy
   DONE        load OFF
-  During both discharges the load is switched OFF for one poll (~2 s) every --rint minutes to
-  measure the DC internal resistance R = (U_off - U_on) / (I_off - I_on)  (1-2 s DCIR, includes
-  contacts/wiring/sense resistor; the result is the median of the DISCHARGE2 values).
+  During both discharges the load is switched OFF for --rint-off seconds (default 3) every --rint
+  minutes to measure the DC internal resistance R = (U_off - U_on) / (I_off - I_on): U_on/I_on read
+  just before switching OFF, U_off/I_off read exactly --rint-off s later (the gauge updates once
+  per second, so its values come from the last second before the reading).  Includes contacts,
+  wiring and sense resistor; the result is the median of the DISCHARGE2 values.
   The script ends when all cells are DONE (chargers OFF, loads OFF).
 
 Logs:
@@ -36,9 +38,11 @@ Usage:
   ./cycling.py                       new cells, log to cycling_YYYYmmdd_HHMMSS.csv
   ./cycling.py --cells A1,A2,A3,A4   cell labels for results.csv (ch0..ch3, empty = no cell id)
   ./cycling.py --same-cells          continue with the same cells (keep learned gauge values)
+  ./cycling.py --skip-predischarge   start with CHARGE (no DISCHARGE1 / REST1)
   ./cycling.py --empty 3000          discharge end voltage under load [mV] (default 3500)
   ./cycling.py --rest 60             rest 60 min between charge and discharge
   ./cycling.py --rint 0              no internal resistance measurement (default every 5 min)
+  ./cycling.py --rint-off 5          load OFF for 5 s per R measurement (default 3 s)
   ./cycling.py --status              read-only: print one readout of all cells and exit
   ./cycling.py --cycler 9BFD         several cyclers connected: use the one whose CP2112 serial
                                      ends with 9BFD (./hwtest.py --list shows them)
@@ -72,7 +76,8 @@ REST_MIN = 30           # default rest between charge and discharge [min]
 REST_EMPTY_MIN = 10     # default rest between the first discharge and charge [min]
 POLL_S = 2.0            # readout + terminal output period
 RINT_MIN = 5            # internal resistance measurement period during discharge [min]
-RINT_OFF_S = 1.5        # load OFF at least this long before the "off" reading (gauge updates 1/s)
+RINT_OFF_S = 3.0        # default load OFF time before the "off" reading for R [s]
+RINT_OFF_MIN_S = 1.5    # shorter: the 1 s gauge values would still include the load-ON period
 RINT_MIN_DI_MA = 100    # current step needed for a valid measurement
 MAX_I2C_ERRORS = 5      # consecutive failed readouts of one cell -> abort
 RESULTS_FILE = "results.csv"
@@ -189,7 +194,7 @@ def setup_gauges(bus, new_cell):
 
 # ----------------------------------------------------------------- results ---
 RESULT_COLUMNS = ["start", "end", "log", "cycler", "ch", "cell_id", "status",
-                  "capacity_mAh", "energy_Wh", "R_dc_mOhm", "R_min_mOhm", "R_max_mOhm", "R_n",
+                  "capacity_mAh", "energy_Wh", "R_dc_mOhm", "R_min_mOhm", "R_max_mOhm", "R_n", "R_pulse_s",
                   "I_load_mA", "t_discharge_h", "U_ocv_full_mV", "charge_mAh", "t_charge_h",
                   "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw", "calibrated"]
 
@@ -214,6 +219,7 @@ def write_results(res, path=RESULTS_FILE):
 # -------------------------------------------------------------------- main ---
 def run(bus, args):
     rest_s, rest_empty_s, rint_s, empty_mv = args.rest * 60, args.rest_empty * 60, args.rint * 60, args.empty
+    rint_off_s = args.rint_off
     ids = (args.cells.split(",") + [""] * 4)[:4] if args.cells else [""] * 4
     chargers = Chargers()
     loads = Loads(bus)
@@ -227,13 +233,15 @@ def run(bus, args):
     last = {}
     t_prev = {}                                 # time of the previous sample (integration)
     rint_next = {}                              # time of next R measurement
-    pulse = {}                                  # ch -> (t_off, U_on, I_on) while load is OFF for R
+    pulse = {}                                  # ch -> (t_off, U_on, I_on, pos) while load is OFF for R;
+                                                # pos = t_off - start of its poll (channel position)
     acc = {ch: {"mAh": 0.0, "mWh": 0.0, "R": [], "rem_start": None} for ch in CHANNELS}
 
     stamp = datetime.now()
     logname = stamp.strftime(f"cycling_{args.serial}_%Y%m%d_%H%M%S.csv")
     res = {ch: {"start": stamp.isoformat(timespec="seconds"), "log": logname, "cycler": args.serial, "ch": ch,
                 "cell_id": ids[ch], "status": "ABORTED in DISCHARGE1", "empty_mV": empty_mv,
+                "R_pulse_s": rint_off_s if rint_s else "",
                 "calibrated": "yes" if ch in getattr(bus, "cal", {}) else "no",
                 "gauge_fw": f"0x{fws[ch]:04X}" if ch in fws else "", "T_max_C": None}
            for ch in CHANNELS}
@@ -243,7 +251,7 @@ def run(bus, args):
                   "RemCap_mAh", "R_mOhm", "cal"])
     print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
           f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
-          + (f"R every {rint_s / 60:.0f} min" if rint_s else "no R measurement"))
+          + (f"R every {rint_s / 60:.0f} min (load OFF {rint_off_s:g} s)" if rint_s else "no R measurement"))
 
     def enter(ch, st, now, msg):
         state[ch] = st
@@ -282,7 +290,11 @@ def run(bus, args):
     time.sleep(1.0)
     t0 = time.time()
     for ch in CHANNELS:
-        start_discharge(ch, t0, "DISCHARGE1", "load ON (initial discharge)")
+        if args.skip_predischarge:              # CE high->low also resets BQ24103 timers/faults
+            chargers.set(ch, True)
+            enter(ch, "CHARGE", t0, "initial discharge skipped, charger ON")
+        else:
+            start_discharge(ch, t0, "DISCHARGE1", "load ON (initial discharge)")
 
     try:
         while True:
@@ -318,8 +330,8 @@ def run(bus, args):
                 res[ch]["T_max_C"] = d["T_C"] if tmax is None else max(tmax, d["T_C"])
 
                 r_mohm = ""
-                if ch in pulse and t_s - pulse[ch][0] >= RINT_OFF_S:
-                    _, u_on, i_on = pulse.pop(ch)
+                if ch in pulse and t_s - pulse[ch][0] >= rint_off_s - 0.1:
+                    t_off, u_on, i_on, _ = pulse.pop(ch)
                     loads.set(ch, True)                     # load back ON
                     # unknown FW: only filtered AverageCurrent (tau ~15 s) - the 2 s "off" value is
                     # meaningless, but with charger and load OFF the current is exactly 0
@@ -350,7 +362,8 @@ def run(bus, args):
                     elif in_state > DISCHARGE_TIMEOUT_S:
                         raise RuntimeError(f"ch{ch}: {st} timeout")
                     elif rint_s and now >= rint_next[ch]:
-                        pulse[ch] = (time.time(), d["U_mV"], d["I_mA"])   # values under load
+                        t_off = time.time()                 # U_on/I_on = values under load
+                        pulse[ch] = (t_off, d["U_mV"], d["I_mA"], t_off - now)
                         loads.set(ch, False)
                         rint_next[ch] = now + rint_s
 
@@ -391,7 +404,10 @@ def run(bus, args):
                 print(f"\nAll cells done, total {(now - t0) / 3600:.2f} h")
                 return 0
 
-            time.sleep(max(0.0, POLL_S - (time.time() - now)))
+            # next poll after POLL_S, or earlier so that a pulsed channel is read exactly
+            # rint_off_s after its load was switched OFF
+            t_next = min([now + POLL_S] + [t + rint_off_s - pos for t, _, _, pos in pulse.values()])
+            time.sleep(max(0.0, t_next - time.time()))
     finally:
         # safe state: loads OFF first, then chargers OFF
         try:
@@ -424,6 +440,8 @@ def main():
     ap.add_argument("--same-cells", action="store_true",
                     help="continue with the same cells: keep the values learned by the gauges")
     ap.add_argument("--cells", metavar="ID0,ID1,ID2,ID3", help="cell labels for results.csv")
+    ap.add_argument("--skip-predischarge", action="store_true",
+                    help="skip the initial discharge (and its rest), start with charging")
     ap.add_argument("--empty", type=int, default=EMPTY_MV, metavar="MV",
                     help=f"discharge end voltage under load (default {EMPTY_MV})")
     ap.add_argument("--rest", type=float, default=REST_MIN, metavar="MIN",
@@ -432,9 +450,14 @@ def main():
                     help=f"rest between the initial discharge and charge in minutes (default {REST_EMPTY_MIN})")
     ap.add_argument("--rint", type=float, default=RINT_MIN, metavar="MIN",
                     help=f"internal resistance measurement period in minutes, 0 = off (default {RINT_MIN})")
+    ap.add_argument("--rint-off", type=float, default=RINT_OFF_S, metavar="S",
+                    help=f"load OFF time per internal resistance measurement in seconds (default {RINT_OFF_S:g}, "
+                         f"min {RINT_OFF_MIN_S:g})")
     hw.add_cycler_arg(ap)
     args = ap.parse_args()
 
+    if args.rint_off < RINT_OFF_MIN_S:
+        ap.error(f"--rint-off must be at least {RINT_OFF_MIN_S:g} s")
     bus, args.serial = hw.open_cycler(args)
     if args.status:
         status(bus)

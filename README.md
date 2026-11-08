@@ -62,16 +62,17 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    ./cycling.py --cells A1,A2,A3,A4
    ```
    - Each cell is discharged, rests 10 min, is charged, rests 30 min and is discharged again. The capacity (mAh, Wh) comes from the second discharge.
-   - The DC internal resistance is measured every 5 min during both discharges.
+   - The DC internal resistance is measured every 5 min during both discharges: the load is switched off for 3 s and R = ΔU / ΔI between the reading just before and the reading 3 s after switching off.
    - At start, the gauge configuration is checked and the values the gauge learned on the previous cells are discarded. Use `--same-cells` to keep them when you continue with the same cells.
-   - More options: `--empty MV` (discharge end voltage, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN`.
+   - `--skip-predischarge` skips the initial discharge and its rest; the test starts with charging.
+   - More options: `--empty MV` (discharge end voltage, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN` (R period), `--rint-off S` (load off time for R, default 3).
 4. **Watch the progress** in a second terminal. Without an argument it opens the newest log:
    ```
    ./plotlog.py
    ```
 5. **Results:** `results.csv` gets one row per cell and test. Each row holds:
    - capacity and energy;
-   - DC resistance (median, min, max);
+   - DC resistance (median, min, max) and the load off time used (`R_pulse_s`);
    - discharge current;
    - voltage after charge and charged capacity;
    - maximum temperature;
