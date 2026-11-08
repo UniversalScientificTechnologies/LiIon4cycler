@@ -24,15 +24,6 @@ Popis zařízení a návod k použití skriptů je v [README.md](README.md).
 - Výstupy jsou open-drain. Kombinace `LSx = 01` stáhne výstup do L, `00` ho uvolní (Hi-Z) a výstup je pak v H díky pull-upu z propojek J6–J13.
 - LED0–LED3 jsou indikační LED (svítí při L), LED4–LED7 spínají zátěže (**L = vypnuto, H = zapnuto**). Bezpečný stav je maska `FETS_OFF = 0xF0` (LS0/LS1 = `0x00`/`0x55`).
 - Zátěže se spínají staticky, střídavé (AC-vázané) ovládání se nepoužívá kvůli chybějícímu modulu. **Nic je tedy nevypne, když program spadne.** PCA9531 si drží poslední stav, dokud se znovu nenastaví nebo dokud se modul nevypne.
-- Každý kanál má jinou zátěž. Naměřené proudy:
-
-  | Kanál | Proud zátěže |
-  |---|---|
-  | ch0 | ≈ 1,54 A |
-  | ch3 | ≈ 1,03 A |
-  | ch1, ch2 | ≈ 0,68–0,77 A |
-
-  Kapacity naměřené na různých kanálech proto nejsou přímo srovnatelné. Kanály je potřeba sjednotit, nebo počítat s rozdílným vybíjecím proudem (sloupec `I_load_mA` v `results.csv`).
 
 ## Gauge BQ34Z100 – dvě verze firmware
 
@@ -73,7 +64,6 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 ## Nabíječka BQ24103
 
 - Nabíječka nezačne znovu nabíjet, pokud je článek nad prahem pro dobíjení. Jednou to vedlo k falešnému stavu FULL při 4108 mV, kdy článek ve skutečnosti nebyl nabitý. Sekvence vybití → nabití → vybití tomu předchází, protože se vždy nabíjí z vybitého článku.
-- ch3 v jednom běhu nabíjel jen proudem 350–430 mA, v dřívějším logu 1383 mA. Příčina (teplota, pokles napájení, hardware) zatím není ověřená.
 
 ## Měření kapacity a vnitřního odporu
 
@@ -90,8 +80,4 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 
 ## Otevřené body
 
-- Ověřit nízký nabíjecí proud na ch3.
-- Sjednotit zátěže na všech kanálech, nebo se rozhodnout, jakým proudem se má kapacita měřit.
-- Rozhodnout o konečném napětí vybíjení (výchozí 3500 mV pod zátěží).
-- Rozhodnout, jestli zapnout Impedance Track v gauge.
-- Čtení GPIO reportem `0x03` v `alloff.py` je ověřené jen na jednom převodníku.
+Otevřené úkoly jsou v [TODO.md](TODO.md).
