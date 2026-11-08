@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LiIon4cycler: charge all 4 cells, then discharge them down to 3.5 V.
+"""LiIon4cycler: capacity and DC internal resistance test of 4 cells.
 
 Hardware (see hwtest.py):
   - BQ34Z100 gauges on I2CHUB02 channels 0..3 (voltage, current, temperature)
@@ -8,27 +8,40 @@ Hardware (see hwtest.py):
     H = load ON, released open-drain pulled high), LED0..LED3 are indicators
 
 Start: every gauge is identified and its data flash configuration checked (hwtest.configure_gauge,
-  writes only differing values - normally nothing; the data flash is non-volatile).
+  writes only differing values).  New cells are assumed: the values the gauge learned on the
+  previous cell (Qmax, Ra tables, cycle count) are discarded; --same-cells keeps them.
 
 Sequence (each cell independently, runs once):
-  CHARGE     charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S
-  REST       charger OFF, wait --rest minutes (default 30) for the voltage to settle
-  DISCHARGE  load ON until U <= EMPTY_MV (EMPTY_COUNT samples in a row);
-             every RINT_PERIOD_S the load is switched OFF for one poll (~2 s) to measure
-             the internal resistance R = (U_off - U_on) / (I_off - I_on)  (1-2 s DCIR,
-             includes contacts/wiring/sense resistor, the gauge measures on the PCB;
-             gauge FW without any instantaneous current: settled AverageCurrent, I_off = 0)
-  DONE       load OFF
+  DISCHARGE1  load ON until U <= --empty (EMPTY_COUNT samples in a row) - defined empty start
+  REST1       load OFF, wait --rest-empty minutes (default 10)
+  CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S
+  REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
+  DISCHARGE2  load ON until U <= --empty -> measured capacity (integrated current) and energy
+  DONE        load OFF
+  During both discharges the load is switched OFF for one poll (~2 s) every --rint minutes to
+  measure the DC internal resistance R = (U_off - U_on) / (I_off - I_on)  (1-2 s DCIR, includes
+  contacts/wiring/sense resistor; the result is the median of the DISCHARGE2 values).
   The script ends when all cells are DONE (chargers OFF, loads OFF).
 
+Logs:
+  cycling_YYYYmmdd_HHMMSS.csv  every sample of every cell
+  results.csv                  one line per cell and run (appended): capacity, energy, DC resistance,
+                               charged capacity, ... - also written for an aborted run (status column)
+
 Usage:
-  ./cycling.py            run the cycle, log to cycling_YYYYmmdd_HHMMSS.csv
-  ./cycling.py --rest 60  rest 60 min between charge and discharge
-  ./cycling.py --rint 0   no internal resistance measurement (default every 5 min)
-  ./cycling.py --status   read-only: print one readout of all cells and exit
+  ./cycling.py                       new cells, log to cycling_YYYYmmdd_HHMMSS.csv
+  ./cycling.py --cells A1,A2,A3,A4   cell labels for results.csv (ch0..ch3, empty = no cell id)
+  ./cycling.py --same-cells          continue with the same cells (keep learned gauge values)
+  ./cycling.py --empty 3000          discharge end voltage under load [mV] (default 3500)
+  ./cycling.py --rest 60             rest 60 min between charge and discharge
+  ./cycling.py --rint 0              no internal resistance measurement (default every 5 min)
+  ./cycling.py --status              read-only: print one readout of all cells and exit
+Afterwards ./transport.py brings the cells to the transport voltage.
 """
 import argparse
 import csv
+import os
+import statistics
 import sys
 import time
 from datetime import datetime
@@ -44,17 +57,23 @@ FET_LED = {0: 4, 1: 5, 2: 6, 3: 7}        # mux channel -> PCA9531 output switch
 FULL_MV = 4100          # charge finished: voltage at least ...
 FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates ~130 mA)
 FULL_HOLD_S = 30        # ... for this long
-EMPTY_MV = 3500         # discharge finished (voltage under load)
-EMPTY_COUNT = 3         # consecutive samples below EMPTY_MV
+EMPTY_MV = 3500         # default discharge end (voltage under load)
+EMPTY_COUNT = 3         # consecutive samples below the empty voltage
 MAX_TEMP_C = 55.0       # any cell above -> abort (everything off)
 CHARGE_TIMEOUT_S = 8 * 3600
 DISCHARGE_TIMEOUT_S = 8 * 3600
 REST_MIN = 30           # default rest between charge and discharge [min]
+REST_EMPTY_MIN = 10     # default rest between the first discharge and charge [min]
 POLL_S = 2.0            # readout + terminal output period
 RINT_MIN = 5            # internal resistance measurement period during discharge [min]
 RINT_OFF_S = 1.5        # load OFF at least this long before the "off" reading (gauge updates 1/s)
 RINT_MIN_DI_MA = 100    # current step needed for a valid measurement
 MAX_I2C_ERRORS = 5      # consecutive failed readouts of one cell -> abort
+RESULTS_FILE = "results.csv"
+
+DISCHARGES = ("DISCHARGE1", "DISCHARGE2")
+SHORT = {"DISCHARGE1": "DIS1", "REST1": "RST1", "CHARGE": "CHRG", "REST2": "RST2",
+         "DISCHARGE2": "DIS2", "DONE": "DONE"}
 
 # ------------------------------------------------------------- CP2112 GPIO ---
 CE_MASK = sum(1 << g for g in CE_GPIO.values())
@@ -116,7 +135,6 @@ class Loads:
         hw.pwm_leds(self.bus, hw.FETS_OFF)
 
 
-
 # ------------------------------------------------------------------ gauges ---
 def read_cell(bus, ch):
     hw.mux_select(bus, ch)
@@ -137,59 +155,119 @@ def status(bus):
     hw.mux_select(bus, None)
 
 
-# -------------------------------------------------------------------- main ---
-def setup_gauges(bus):
-    """Identify all gauges and make sure their data flash configuration is right."""
+def setup_gauges(bus, new_cell):
+    """Identify all gauges, check their data flash configuration and (new cells) discard the
+    learned values.  Returns {ch: firmware}."""
+    fws = {}
     for ch in CHANNELS:
         try:
             hw.mux_select(bus, ch)
             g = hw.identify_gauge(bus)
+            fws[ch] = g["fw"]
             tag = f"ch{ch}: gauge FW 0x{g['fw']:04X}"
             if g["fw"] not in hw.GAUGE_CONFIGS:
                 print(f"{tag}  WARNING: unknown firmware (known: {hw.KNOWN_FW}) - not configured, "
-                      f"current = AverageCurrent() only")
+                      f"learned values not reset, current = AverageCurrent() only")
                 continue
-            changes = hw.configure_gauge(bus)
-            print(f"{tag}  config " + ("OK" if not changes else "UPDATED: " + "; ".join(changes)))
+            changes = hw.configure_gauge(bus, new_cell=new_cell)
+            what = "config + learned values reset (new cell)" if new_cell else "config"
+            print(f"{tag}  {what} " + ("OK" if not changes else f"UPDATED ({len(changes)} values)"))
+            for c in changes:
+                print(f"         {c}")
         except (OSError, RuntimeError) as e:
             print(f"ch{ch}: WARNING: gauge configuration not checked ({e})")
     hw.mux_select(bus, None)
+    return fws
 
 
-def run(bus, rest_s, rint_s):
+# ----------------------------------------------------------------- results ---
+RESULT_COLUMNS = ["start", "end", "log", "ch", "cell_id", "status",
+                  "capacity_mAh", "energy_Wh", "R_dc_mOhm", "R_min_mOhm", "R_max_mOhm", "R_n",
+                  "I_load_mA", "t_discharge_h", "U_ocv_full_mV", "charge_mAh", "t_charge_h",
+                  "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw"]
+
+
+def write_results(res, path=RESULTS_FILE):
+    new = not os.path.exists(path) or os.path.getsize(path) == 0
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=RESULT_COLUMNS, extrasaction="ignore")
+        if new:
+            w.writeheader()
+        for ch in CHANNELS:
+            w.writerow(res[ch])
+
+
+# -------------------------------------------------------------------- main ---
+def run(bus, args):
+    rest_s, rest_empty_s, rint_s, empty_mv = args.rest * 60, args.rest_empty * 60, args.rint * 60, args.empty
+    ids = (args.cells.split(",") + [""] * 4)[:4] if args.cells else [""] * 4
     chargers = Chargers()
     loads = Loads(bus)
-    setup_gauges(bus)
-    state = {ch: "CHARGE" for ch in CHANNELS}   # CHARGE -> REST -> DISCHARGE -> DONE
+    fws = setup_gauges(bus, new_cell=not args.same_cells)
+
+    state = {ch: "DISCHARGE1" for ch in CHANNELS}
     since = {}                                  # start time of the current state
     full_since = {ch: None for ch in CHANNELS}
     low_count = {ch: 0 for ch in CHANNELS}
     errors = {ch: 0 for ch in CHANNELS}
-    result = {}
     last = {}
+    t_prev = {}                                 # time of the previous sample (integration)
     rint_next = {}                              # time of next R measurement
     pulse = {}                                  # ch -> (t_off, U_on, I_on) while load is OFF for R
+    acc = {ch: {"mAh": 0.0, "mWh": 0.0, "R": [], "rem_start": None} for ch in CHANNELS}
 
-    logname = datetime.now().strftime("cycling_%Y%m%d_%H%M%S.csv")
+    stamp = datetime.now()
+    logname = stamp.strftime("cycling_%Y%m%d_%H%M%S.csv")
+    res = {ch: {"start": stamp.isoformat(timespec="seconds"), "log": logname, "ch": ch,
+                "cell_id": ids[ch], "status": "ABORTED in DISCHARGE1", "empty_mV": empty_mv,
+                "gauge_fw": f"0x{fws[ch]:04X}" if ch in fws else "", "T_max_C": None}
+           for ch in CHANNELS}
     logf = open(logname, "w", newline="")
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
                   "RemCap_mAh", "R_mOhm"])
-    print(f"Logging to {logname}, rest {rest_s / 60:.0f} min, discharge to {EMPTY_MV} mV, "
+    print(f"Logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
+          f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
           + (f"R every {rint_s / 60:.0f} min" if rint_s else "no R measurement"))
 
     def enter(ch, st, now, msg):
         state[ch] = st
         since[ch] = now
+        t_prev[ch] = now
+        res[ch]["status"] = f"ABORTED in {st}"
+        acc[ch].update(mAh=0.0, mWh=0.0, R=[], rem_start=None)
         print(f"  ch{ch}: {msg}")
 
-    # start charging; CE high->low transition also resets BQ24103 timers/faults
+    def start_discharge(ch, now, st, msg):
+        loads.set(ch, True)
+        rint_next[ch] = now + rint_s
+        low_count[ch] = 0
+        enter(ch, st, now, msg)
+
+    def finish_discharge(ch, now, d):
+        a, in_state = acc[ch], now - since[ch]
+        loads.set(ch, False)
+        if state[ch] == "DISCHARGE1":
+            res[ch]["predischarge_mAh"] = round(a["mAh"])
+            enter(ch, "REST1", now, f"EMPTY at {d['U_mV']} mV after {in_state / 3600:.2f} h "
+                  f"({a['mAh']:.0f} mAh), load OFF, resting")
+        else:
+            r = a["R"]
+            res[ch].update(capacity_mAh=round(a["mAh"]), energy_Wh=round(a["mWh"] / 1000, 2),
+                           t_discharge_h=round(in_state / 3600, 2),
+                           I_load_mA=round(a["mAh"] / (in_state / 3600)) if in_state else "",
+                           gauge_used_mAh=a["rem_start"] - d["RemCap_mAh"],
+                           R_dc_mOhm=round(statistics.median(r), 1) if r else "",
+                           R_min_mOhm=min(r) if r else "", R_max_mOhm=max(r) if r else "", R_n=len(r))
+            enter(ch, "DONE", now, f"EMPTY at {d['U_mV']} mV after {in_state / 3600:.2f} h, load OFF: "
+                  f"capacity {a['mAh']:.0f} mAh, {a['mWh'] / 1000:.2f} Wh"
+                  + (f", R {res[ch]['R_dc_mOhm']} mOhm" if r else ""))
+            res[ch]["status"] = "OK"
+
     time.sleep(1.0)
     t0 = time.time()
     for ch in CHANNELS:
-        chargers.set(ch, True)
-        since[ch] = t0
-    print("All chargers ON")
+        start_discharge(ch, t0, "DISCHARGE1", "load ON (initial discharge)")
 
     try:
         while True:
@@ -207,83 +285,95 @@ def run(bus, rest_s, rint_s):
                         raise RuntimeError(f"ch{ch}: gauge not responding")
                     continue
                 last[ch] = d
-                load_on = state[ch] == "DISCHARGE" and ch not in pulse
+                st = state[ch]
+                a = acc[ch]
+                t_s = time.time()
+                load_on = st in DISCHARGES and ch not in pulse
+
+                # charge / discharge integration (rectangle, sample current x time since last sample)
+                dt_h = (t_s - t_prev.get(ch, t_s)) / 3600
+                t_prev[ch] = t_s
+                sign = -1 if st in DISCHARGES else 1 if st == "CHARGE" else 0
+                if sign:
+                    a["mAh"] += max(0, sign * d["I_mA"]) * dt_h
+                    a["mWh"] += max(0, sign * d["I_mA"]) * d["U_mV"] / 1000 * dt_h
+                    if a["rem_start"] is None:
+                        a["rem_start"] = d["RemCap_mAh"]
+                tmax = res[ch]["T_max_C"]
+                res[ch]["T_max_C"] = d["T_C"] if tmax is None else max(tmax, d["T_C"])
+
                 r_mohm = ""
-                if ch in pulse and time.time() - pulse[ch][0] >= RINT_OFF_S:
+                if ch in pulse and t_s - pulse[ch][0] >= RINT_OFF_S:
                     _, u_on, i_on = pulse.pop(ch)
                     loads.set(ch, True)                     # load back ON
                     # unknown FW: only filtered AverageCurrent (tau ~15 s) - the 2 s "off" value is
-                    # meaningless, but with charger and load OFF the current is exactly 0;
-                    # i_on is settled (load ON for RINT_MIN)
+                    # meaningless, but with charger and load OFF the current is exactly 0
                     i_off = d["I_mA"] if d["I_inst"] else 0
                     di = i_off - i_on
                     if abs(di) >= RINT_MIN_DI_MA:
                         r_mohm = round((d["U_mV"] - u_on) / di * 1000, 1)
+                        a["R"].append(r_mohm)
                         print(f"  ch{ch}: R = {r_mohm} mOhm  (U {u_on} -> {d['U_mV']} mV, "
                               f"I {i_on} -> {i_off} mA{'' if d['I_inst'] else ' assumed'}, "
                               f"SoC {d['SoC_%']}%)")
                     else:
                         print(f"  ch{ch}: R not measured, current step only {di} mA")
                 log.writerow([datetime.now().isoformat(timespec="seconds"), round(now - t0, 1), ch,
-                              state[ch], int(load_on), d["U_mV"], d["I_mA"], d["T_C"], d["SoC_%"],
+                              st, int(load_on), d["U_mV"], d["I_mA"], d["T_C"], d["SoC_%"],
                               d["RemCap_mAh"], r_mohm])
 
                 if d["T_C"] > MAX_TEMP_C:
                     raise RuntimeError(f"ch{ch}: temperature {d['T_C']} C > {MAX_TEMP_C} C")
                 in_state = now - since[ch]
 
-                if state[ch] == "CHARGE":
+                if st in DISCHARGES:
+                    if ch in pulse or not load_on:
+                        continue                            # load OFF for R: voltage not under load
+                    low_count[ch] = low_count[ch] + 1 if d["U_mV"] <= empty_mv else 0
+                    if low_count[ch] >= EMPTY_COUNT:
+                        finish_discharge(ch, now, d)
+                    elif in_state > DISCHARGE_TIMEOUT_S:
+                        raise RuntimeError(f"ch{ch}: {st} timeout")
+                    elif rint_s and now >= rint_next[ch]:
+                        pulse[ch] = (time.time(), d["U_mV"], d["I_mA"])   # values under load
+                        loads.set(ch, False)
+                        rint_next[ch] = now + rint_s
+
+                elif st == "REST1":
+                    if in_state >= rest_empty_s:
+                        # CE high->low transition also resets BQ24103 timers/faults
+                        chargers.set(ch, True)
+                        full_since[ch] = None
+                        enter(ch, "CHARGE", now, f"rest over at {d['U_mV']} mV, charger ON")
+
+                elif st == "CHARGE":
                     if d["U_mV"] >= FULL_MV and abs(d["I_mA"]) <= FULL_MA:
                         full_since[ch] = full_since[ch] or now
                         if now - full_since[ch] >= FULL_HOLD_S:
                             chargers.set(ch, False)
-                            enter(ch, "REST", now, f"FULL at {d['U_mV']} mV after "
-                                  f"{in_state / 3600:.2f} h, charger OFF, resting")
+                            res[ch].update(charge_mAh=round(a["mAh"]), t_charge_h=round(in_state / 3600, 2))
+                            enter(ch, "REST2", now, f"FULL at {d['U_mV']} mV after {in_state / 3600:.2f} h "
+                                  f"({a['mAh']:.0f} mAh charged), charger OFF, resting")
                     else:
                         full_since[ch] = None
                     if state[ch] == "CHARGE" and in_state > CHARGE_TIMEOUT_S:
                         raise RuntimeError(f"ch{ch}: charge timeout")
 
-                elif state[ch] == "REST":
+                elif st == "REST2":
                     if in_state >= rest_s:
-                        loads.set(ch, True)
-                        rint_next[ch] = now + rint_s
-                        result[ch] = {"rest_end_mV": d["U_mV"], "rem_start": d["RemCap_mAh"], "R": []}
-                        enter(ch, "DISCHARGE", now, f"rest over at {d['U_mV']} mV, load ON")
-
-                elif state[ch] == "DISCHARGE":
-                    if r_mohm != "":
-                        result[ch]["R"].append(r_mohm)
-                    if ch in pulse or not load_on:
-                        continue                            # load OFF for R: voltage not under load
-                    low_count[ch] = low_count[ch] + 1 if d["U_mV"] <= EMPTY_MV else 0
-                    if low_count[ch] >= EMPTY_COUNT:
-                        loads.set(ch, False)
-                        result[ch].update(t_h=in_state / 3600, rem_end=d["RemCap_mAh"])
-                        enter(ch, "DONE", now, f"EMPTY at {d['U_mV']} mV after "
-                              f"{in_state / 3600:.2f} h, load OFF")
-                    elif in_state > DISCHARGE_TIMEOUT_S:
-                        raise RuntimeError(f"ch{ch}: discharge timeout")
-                    elif rint_s and now >= rint_next[ch]:
-                        pulse[ch] = (time.time(), d["U_mV"], d["I_mA"])   # values under load
-                        loads.set(ch, False)
-                        rint_next[ch] = now + rint_s
+                        res[ch]["U_ocv_full_mV"] = d["U_mV"]
+                        start_discharge(ch, now, "DISCHARGE2", f"rest over at {d['U_mV']} mV, load ON "
+                                        f"(capacity discharge)")
             hw.mux_select(bus, None)
             logf.flush()
 
             print(f"[{(now - t0) / 60:7.1f} min] " + " | ".join(
-                f"ch{ch} {state[ch][:4]:<4} {last[ch]['U_mV']:>4}mV {last[ch]['I_mA']:>5}mA "
+                f"ch{ch} {SHORT[state[ch]]} {last[ch]['U_mV']:>4}mV {last[ch]['I_mA']:>5}mA "
                 f"{last[ch]['T_C']:>4.1f}C" if ch in last else f"ch{ch} ----"
                 for ch in CHANNELS))
 
             if all(state[ch] == "DONE" for ch in CHANNELS):
-                print(f"\nAll cells discharged to {EMPTY_MV} mV, total {(now - t0) / 3600:.2f} h")
-                for ch in CHANNELS:
-                    r = result[ch]
-                    print(f"  ch{ch}: discharge {r['t_h']:.2f} h, gauge RemCap "
-                          f"{r['rem_start']} -> {r['rem_end']} mAh "
-                          f"(used {r['rem_start'] - r['rem_end']} mAh), rest end {r['rest_end_mV']} mV"
-                          + (f", R {min(r['R'])}..{max(r['R'])} mOhm (n={len(r['R'])})" if r["R"] else ""))
+                print(f"\nAll cells done, total {(now - t0) / 3600:.2f} h")
                 return 0
 
             time.sleep(max(0.0, POLL_S - (time.time() - now)))
@@ -300,13 +390,31 @@ def run(bus, rest_s, rint_s):
             pass
         logf.close()
         print("Loads OFF, chargers OFF")
+        end = datetime.now().isoformat(timespec="seconds")
+        for ch in CHANNELS:
+            res[ch]["end"] = end
+        write_results(res)
+        print(f"\nResults (appended to {RESULTS_FILE}):")
+        for ch in CHANNELS:
+            r = res[ch]
+            print(f"  ch{ch} {r['cell_id'] or '-':<8} {r['status']:<20} "
+                  f"capacity {r.get('capacity_mAh', '-')} mAh  {r.get('energy_Wh', '-')} Wh  "
+                  f"R_dc {r.get('R_dc_mOhm') or '-'} mOhm  (charged {r.get('charge_mAh', '-')} mAh, "
+                  f"OCV full {r.get('U_ocv_full_mV', '-')} mV, load {r.get('I_load_mA', '-')} mA)")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--status", action="store_true", help="read-only readout of all cells")
+    ap.add_argument("--same-cells", action="store_true",
+                    help="continue with the same cells: keep the values learned by the gauges")
+    ap.add_argument("--cells", metavar="ID0,ID1,ID2,ID3", help="cell labels for results.csv")
+    ap.add_argument("--empty", type=int, default=EMPTY_MV, metavar="MV",
+                    help=f"discharge end voltage under load (default {EMPTY_MV})")
     ap.add_argument("--rest", type=float, default=REST_MIN, metavar="MIN",
-                    help=f"rest between charge and discharge in minutes (default {REST_MIN})")
+                    help=f"rest between charge and the capacity discharge in minutes (default {REST_MIN})")
+    ap.add_argument("--rest-empty", type=float, default=REST_EMPTY_MIN, metavar="MIN",
+                    help=f"rest between the initial discharge and charge in minutes (default {REST_EMPTY_MIN})")
     ap.add_argument("--rint", type=float, default=RINT_MIN, metavar="MIN",
                     help=f"internal resistance measurement period in minutes, 0 = off (default {RINT_MIN})")
     args = ap.parse_args()
@@ -319,7 +427,7 @@ def main():
         status(bus)
         return 0
     try:
-        return run(bus, args.rest * 60, args.rint * 60)
+        return run(bus, args)
     except KeyboardInterrupt:
         print("\nInterrupted by user")
         return 130

@@ -298,14 +298,27 @@ GAUGE_FW_INFO = {
 }
 KNOWN_FW = ", ".join(f"0x{fw:04X}" for fw in sorted(GAUGE_CONFIGS))
 
+# Learned (Impedance Track) data - same location on FW 0x0006 and 0x0016.  A new cell must not
+# inherit the values learned on the previous one: new_cell=True in configure_gauge() writes these
+# defaults (Qmax = Design Capacity, Ra tables = TI default for CHEM 0x0107, flags "not updated").
+RA_DEFAULT = [105, 100, 113, 143, 98, 97, 108, 89, 86, 85, 87, 90, 110, 647, 1500]
+LEARNED_RESET = (
+    [(82, 2, 2, 0, "Cycle Count (new cell)"),
+     (82, 4, 1, 0x00, "Update Status: clear learned bits (new cell)", 0x03)]   # 05/06 -> 04, 02 -> 00
+    + [(88, 0, 2, 0xFF55, "R_a0 flag (new cell: not updated)")]
+    + [(88, 2 + 2 * i, 2, v, f"R_a0 {i} (new cell)") for i, v in enumerate(RA_DEFAULT)]
+    + [(89, 0, 2, 0xFFFF, "R_a0x flag (new cell: not updated)")]
+    + [(89, 2 + 2 * i, 2, v, f"R_a0x {i} (new cell)") for i, v in enumerate(RA_DEFAULT)])
 
-def cfg_items(fw):
-    """GAUGE_CONFIGS[fw] normalised to (sub, off, size, val, name, mask, initial_default)."""
-    for e in GAUGE_CONFIGS[fw]:
+
+def cfg_items(fw, new_cell=False):
+    """GAUGE_CONFIGS[fw] normalised to (sub, off, size, val, name, mask, initial_default).
+    new_cell: initial values (Qmax) are forced and the learned data are reset as well."""
+    for e in GAUGE_CONFIGS[fw] + (LEARNED_RESET if new_cell else []):
         sub, off, size, val, name = e[:5]
         opt = e[5] if len(e) > 5 else None
         mask = opt if isinstance(opt, int) else (1 << 8 * size) - 1
-        init = opt[1] if isinstance(opt, tuple) else None
+        init = opt[1] if isinstance(opt, tuple) and not new_cell else None
         yield sub, off, size, val, name, mask, init
 
 
@@ -332,8 +345,9 @@ def flash_write_block(bus, sub, blk, data):
     time.sleep(1.0)                                          # flash write time
 
 
-def configure_gauge(bus):
+def configure_gauge(bus, new_cell=False):
     """Apply the config for the gauge's firmware, writing only differing values.
+    new_cell=True also discards the learned values (Qmax, Ra tables, cycle count).
     Returns list of changes."""
     fw = gauge_ctrl(bus, 0x0002)
     if fw not in GAUGE_CONFIGS:
@@ -347,7 +361,7 @@ def configure_gauge(bus):
             raise RuntimeError("gauge is SEALED and default unseal key failed")
     u = gauge_word(bus, 0x08)
     blocks = {}
-    for sub, off, size, val, name, mask, init in cfg_items(fw):
+    for sub, off, size, val, name, mask, init in cfg_items(fw, new_cell):
         blocks.setdefault((sub, off // 32), []).append((off % 32, size, val, name, mask, init))
     changes = []
     for (sub, blk), items in blocks.items():

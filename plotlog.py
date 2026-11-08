@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Live plot of voltage, current and internal resistance from a cycling_*.csv or monitor_*.csv log.
+"""Live plot of voltage, current and internal resistance from a cycling_/monitor_/transport_*.csv log.
 
 The file is followed like `tail -f`: every --interval seconds only newly appended
 lines are read and the new points are added to the graph.
 
 Usage:
-  ./plotlog.py                     newest cycling_*.csv / monitor_*.csv in the current directory
+  ./plotlog.py                     newest cycling_/monitor_/transport_*.csv in the current directory
   ./plotlog.py cycling_X.csv       given file
   ./plotlog.py -i 5 --last 3       refresh every 5 s, show only the last 3 hours
 """
@@ -57,7 +57,7 @@ class LogFollower:
 
 
 def newest_log():
-    files = glob.glob("cycling_*.csv") + glob.glob("monitor_*.csv")
+    files = glob.glob("cycling_*.csv") + glob.glob("monitor_*.csv") + glob.glob("transport_*.csv")
     return max(files, key=os.path.getmtime) if files else None
 
 
@@ -70,7 +70,7 @@ def main():
 
     path = args.file or newest_log()
     if not path:
-        sys.exit("no cycling_*.csv / monitor_*.csv found")
+        sys.exit("no cycling_/monitor_/transport_*.csv found")
     print(f"following {path}  (close the window to quit)")
 
     log = LogFollower(path)
@@ -103,7 +103,7 @@ def main():
             d["state"] = r.get("state", "")
             if r.get("R_mOhm"):
                 d["rt"].append(t); d["R"].append(float(r["R_mOhm"]))
-            if d["state"] == "DISCHARGE" and r.get("load") == "0":
+            if d["state"].startswith("DISCHARGE") and r.get("load") == "0":
                 continue        # load briefly OFF for the R measurement - keep U/I curves clean
             d["t"].append(t); d["U"].append(u); d["I"].append(i)
         if not rows and lines:

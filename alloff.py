@@ -3,7 +3,7 @@
   - all chargers OFF  (CP2112 GPIO -> /CE high; the CP2112 keeps this as long as it is USB-powered)
   - all loads OFF     (PCA9531 LED4..LED7 low), indicators LED0..LED3 off
 
-Run it before connecting power supplies or cells.  Refuses to run while cycling.py / chargertest.py is running (--force overrides).
+Run it before connecting power supplies or cells.  Refuses to run while cycling.py / chargertest.py / transport.py is running (--force overrides).
 """
 import glob
 import os
@@ -17,14 +17,14 @@ REP_GPIO_GET = 0x03     # CP2112 "Get GPIO Values" -> [0x03, pin levels]
 
 
 def cycling_running():
-    """PIDs of other running cycling.py / chargertest.py processes."""
+    """PIDs of other running cycling.py / chargertest.py / transport.py processes."""
     pids = []
     for f in glob.glob("/proc/[0-9]*/cmdline"):
         try:
             cmd = open(f, "rb").read().split(b"\0")
         except OSError:
             continue
-        if any(os.path.basename(a) in (b"cycling.py", b"chargertest.py") for a in cmd[1:3]):
+        if any(os.path.basename(a) in (b"cycling.py", b"chargertest.py", b"transport.py") for a in cmd[1:3]):
             pids.append(f.split("/")[2])
     return pids
 
@@ -32,7 +32,7 @@ def cycling_running():
 def main():
     pids = cycling_running()
     if pids and "--force" not in sys.argv:
-        print(f"cycling.py/chargertest.py is running (PID {', '.join(pids)}) - stop it first, "
+        print(f"cycling.py/chargertest.py/transport.py is running (PID {', '.join(pids)}) - stop it first, "
               f"or use --force to switch everything off anyway")
         return 2
     rc = 0
