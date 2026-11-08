@@ -140,9 +140,9 @@ def add_cycler_arg(ap):
                          "needed only with several cyclers connected (also env CYCLER)")
 
 
-def open_cycler(args, lock=True):
+def open_cycler(args, lock=True, calibrated=True):
     """Select the cycler from args.cycler, lock it, open its I2C bus and load its calibration
-    (bus.cal, see load_calibration) -> (Bus, serial)."""
+    (bus.cal, see load_calibration; calibrated=False -> none, raw values) -> (Bus, serial)."""
     select_cycler(getattr(args, "cycler", None))
     serial = lock_cycler() if lock else cycler_serial()
     dev = cycler()["i2c"]
@@ -150,8 +150,9 @@ def open_cycler(args, lock=True):
         raise SystemExit(f"cycler {serial}: CP2112 has no I2C bus (hid_cp2112 driver loaded?)")
     bus = Bus(dev)
     bus.serial = serial
-    bus.cal = load_calibration(serial)
-    print(cal_info(bus))
+    bus.cal = load_calibration(serial) if calibrated else {}
+    if calibrated:
+        print(cal_info(bus))
     return bus, serial
 
 

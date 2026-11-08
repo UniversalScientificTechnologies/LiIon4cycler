@@ -26,8 +26,8 @@ Sequence (each cell independently, runs once):
 Logs:
   cycling_SERIAL_YYYYmmdd_HHMMSS.csv  every sample of every cell (SERIAL = CP2112 serial = cycler)
   calibration.csv              voltage/current calibration per cycler (CP2112 serial) and channel;
-                               without an entry the gauge values are used as they are.  Log column
-                               cal = 1 if calibrated, U_raw_mV / I_raw_mA = gauge values
+                               without an entry the gauge values are used as they are.  Log and
+                               display use calibrated values; log column cal = 1 if calibrated
   results.csv                  one line per cell and run (appended, never overwritten; shared by all
                                cyclers, column "cycler"): capacity, energy, DC resistance,
                                charged capacity, ... - also written for an aborted run (status column)
@@ -240,7 +240,7 @@ def run(bus, args):
     logf = open(logname, "w", newline="")
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
-                  "RemCap_mAh", "R_mOhm", "cal", "U_raw_mV", "I_raw_mA"])
+                  "RemCap_mAh", "R_mOhm", "cal"])
     print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
           f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
           + (f"R every {rint_s / 60:.0f} min" if rint_s else "no R measurement"))
@@ -335,7 +335,7 @@ def run(bus, args):
                         print(f"  ch{ch}: R not measured, current step only {di} mA")
                 log.writerow([datetime.now().isoformat(timespec="seconds"), round(now - t0, 1), ch,
                               st, int(load_on), d["U_mV"], d["I_mA"], d["T_C"], d["SoC_%"],
-                              d["RemCap_mAh"], r_mohm, int(d["cal"]), d["U_raw_mV"], d["I_raw_mA"]])
+                              d["RemCap_mAh"], r_mohm, int(d["cal"])])
 
                 if d["T_C"] > MAX_TEMP_C:
                     raise RuntimeError(f"ch{ch}: temperature {d['T_C']} C > {MAX_TEMP_C} C")

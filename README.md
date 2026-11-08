@@ -40,7 +40,7 @@ Details and findings from bring-up are in [POZNATKY.md](POZNATKY.md) (Czech). Op
 | `hwtest.py` | Hardware test and shared library. Blinks the LEDs, finds the gauges, identifies their firmware, loads the matching configuration and prints the readings. |
 | `alloff.py` | Puts the cycler into a safe state with all chargers and loads off. |
 | `chargertest.py` | Checks the charger /CE wiring; with `--loads` it also checks the loads. |
-| `monitor.py` | Reads the gauges only, with chargers and loads off. Optional CSV log. |
+| `monitor.py` | Reads the raw gauge values (no calibration), with chargers and loads off. Optional CSV log. |
 | `cycling.py` | Cell test: discharge → charge → discharge. Writes capacity and DC resistance to `results.csv`. |
 | `transport.py` | Charges or discharges the cells to the 3.5 V open-circuit transport voltage. |
 | `plotlog.py` | Live plot of voltage, current and resistance from a running log. |
@@ -93,13 +93,14 @@ Voltage and current readings are corrected per cycler and channel from `calibrat
 
 ```
 cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
-00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"bench meter: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A"
+00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"UNI-T UT804: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
 ```
 
 - Corrected value = gauge value × gain + offset (mV, mA). Lines starting with `#` are comments.
-- With one calibration point: gain = meter reading / gauge reading, offset = 0. `./hwtest.py` prints the raw gauge values to compare against the meter.
+- With one calibration point: gain = meter reading / gauge reading, offset = 0.
 - A channel without a line uses the gauge values as they are. The scripts print at start which channels are calibrated.
-- The logs show whether calibration was used: column `cal` (1/0) and the raw gauge values `U_raw_mV` and `I_raw_mA`. `results.csv` has the column `calibrated`.
+- `cycling.py` and `transport.py` display and log calibrated values. The log column `cal` (1/0) shows whether calibration was used; `results.csv` has the column `calibrated`.
+- `hwtest.py` and `monitor.py` show raw gauge values, for comparison with a reference meter.
 
 ## Several cyclers on one computer
 

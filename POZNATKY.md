@@ -78,6 +78,20 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
   | ch2 | 100–113 mΩ |
   | ch3 | ≈ 144 mΩ |
 
+## Kalibrace měření (prototyp 00A59BFD)
+
+Napětí a proud z gauge byly porovnány se stolním multimetrem **UNI-T UT804**. Proud se měřil při vybíjení. Korekce je uložená v `calibration.csv`.
+
+| Kanál | Napětí gauge → UT804 | Proud gauge → UT804 | Zisk U | Zisk I |
+|---|---|---|---|---|
+| ch0 | 3,715 → 3,7194 V | 1,432 → 1,380 A | 1,001184 | 0,963687 |
+| ch1 | 3,609 → 3,6121 V | 0,661 → 0,645 A | 1,000859 | 0,975794 |
+| ch2 | 3,607 → 3,6127 V | 0,657 → 0,643 A | 1,001580 | 0,978691 |
+| ch3 | 4,165 → 4,168 V | 1,110 → 1,080 A | 1,000720 | 0,972973 |
+
+- Gauge měří napětí o 0,07–0,16 % nižší než UT804 a proud o 2,1–3,6 % vyšší.
+- Kalibrace je jednobodová, offset je 0. Proud byl kalibrovaný jen při vybíjení a stejný zisk se používá i pro nabíjecí proud.
+
 ## Otevřené body
 
 Otevřené úkoly jsou v [TODO.md](TODO.md).

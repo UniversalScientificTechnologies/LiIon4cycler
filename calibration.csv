@@ -1,9 +1,10 @@
 # LiIon4cycler calibration, one line per cycler channel.
 # cycler = CP2112 (USBI2C01) serial number, ch = cell channel 0..3
 # corrected = gauge value * gain + offset   (voltage in mV, current in mA)
+# reference meter: UNI-T UT804 bench multimeter
 # A cycler/channel without a line uses the gauge values as they are (log column cal = 0).
 cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
-00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"bench meter: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
-00A59BFD,1,1.000859,0,0.975794,0,2026-11-08,"bench meter: 3.609 V -> 3.6121 V, 0.661 A -> 0.645 A (discharge)"
-00A59BFD,2,1.001580,0,0.978691,0,2026-11-08,"bench meter: 3.607 V -> 3.6127 V, 0.657 A -> 0.643 A (discharge)"
-00A59BFD,3,1.000720,0,0.972973,0,2026-11-08,"bench meter: 4.165 V -> 4.168 V, 1.110 A -> 1.080 A (discharge)"
+00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"UNI-T UT804: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
+00A59BFD,1,1.000859,0,0.975794,0,2026-11-08,"UNI-T UT804: 3.609 V -> 3.6121 V, 0.661 A -> 0.645 A (discharge)"
+00A59BFD,2,1.001580,0,0.978691,0,2026-11-08,"UNI-T UT804: 3.607 V -> 3.6127 V, 0.657 A -> 0.643 A (discharge)"
+00A59BFD,3,1.000720,0,0.972973,0,2026-11-08,"UNI-T UT804: 4.165 V -> 4.168 V, 1.110 A -> 1.080 A (discharge)"
