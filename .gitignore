@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# measurement logs
+cycling_*.csv
+monitor_*.csv
