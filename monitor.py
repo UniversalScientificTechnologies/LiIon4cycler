@@ -19,16 +19,17 @@ def main():
     ap.add_argument("-i", "--interval", type=float, default=POLL_S, help=f"period [s] (default {POLL_S})")
     ap.add_argument("--log", action="store_true", help="write monitor_YYYYmmdd_HHMMSS.csv")
     ap.add_argument("--restore", action="store_true", help="switch chargers back ON on exit")
+    hw.add_cycler_arg(ap)
     args = ap.parse_args()
 
-    bus = hw.Bus(hw.find_cp2112_bus())
+    bus, serial = hw.open_cycler(args)
     chargers = Chargers()                    # all chargers OFF (/CE high)
     hw.pwm_leds(bus, hw.FETS_OFF)            # LED4..7 low -> loads OFF, indicators LED0..3 OFF
-    print("chargers OFF, loads OFF  (Ctrl+C to quit)")
+    print(f"Cycler {serial}: chargers OFF, loads OFF  (Ctrl+C to quit)")
 
     log = writer = None
     if args.log:
-        name = datetime.now().strftime("monitor_%Y%m%d_%H%M%S.csv")
+        name = datetime.now().strftime(f"monitor_{serial}_%Y%m%d_%H%M%S.csv")
         log = open(name, "w", newline="")
         writer = csv.writer(log)
         writer.writerow(["time", "ch", "U_mV", "I_mA", "T_C", "SoC_%", "RemCap_mAh", "FullCap_mAh"])

@@ -14,11 +14,12 @@ At the end chargers and loads are OFF.  NOTE: the chargers stay OFF only while t
 USB-powered (the /CE pull-down enables them otherwise) - disconnect the cells or the charger
 supply before unplugging USB.
 
-Log: transport_YYYYmmdd_HHMMSS.csv (same columns as cycling_*.csv, works with plotlog.py).
+Log: transport_SERIAL_YYYYmmdd_HHMMSS.csv (same columns as cycling_*.csv, works with plotlog.py).
 
 Usage:
   ./transport.py                 target 3500 mV, tolerance 20 mV, rest 5 min
   ./transport.py --target 3600 --tol 10 --rest 10
+  ./transport.py --cycler 9BFD   several cyclers connected: select by CP2112 serial (end)
 """
 import argparse
 import csv
@@ -45,13 +46,11 @@ def main():
     ap.add_argument("--tol", type=int, default=TOL_MV, metavar="MV", help=f"tolerance (default {TOL_MV})")
     ap.add_argument("--rest", type=float, default=REST_MIN, metavar="MIN",
                     help=f"rest before each OCV reading in minutes (default {REST_MIN})")
+    hw.add_cycler_arg(ap)
     args = ap.parse_args()
     target, tol, rest_s = args.target, args.tol, args.rest * 60
 
-    dev = hw.find_cp2112_bus()
-    if dev is None:
-        sys.exit("CP2112 I2C bus not found")
-    bus = hw.Bus(dev)
+    bus, serial = hw.open_cycler(args)
     chargers = Chargers()                       # all OFF
     loads = Loads(bus)                          # all OFF
 
@@ -66,12 +65,12 @@ def main():
     errors = {ch: 0 for ch in CHANNELS}
     last = {}
 
-    logname = datetime.now().strftime("transport_%Y%m%d_%H%M%S.csv")
+    logname = datetime.now().strftime(f"transport_{serial}_%Y%m%d_%H%M%S.csv")
     logf = open(logname, "w", newline="")
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
                   "RemCap_mAh", "R_mOhm"])
-    print(f"Target OCV {target} +- {tol} mV, rest {rest_s / 60:.0f} min, logging to {logname}")
+    print(f"Cycler {serial}: target OCV {target} +- {tol} mV, rest {rest_s / 60:.0f} min, logging to {logname}")
 
     def enter(ch, st, now, msg):
         state[ch] = st

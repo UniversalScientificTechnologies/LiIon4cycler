@@ -24,8 +24,9 @@ Sequence (each cell independently, runs once):
   The script ends when all cells are DONE (chargers OFF, loads OFF).
 
 Logs:
-  cycling_YYYYmmdd_HHMMSS.csv  every sample of every cell
-  results.csv                  one line per cell and run (appended): capacity, energy, DC resistance,
+  cycling_SERIAL_YYYYmmdd_HHMMSS.csv  every sample of every cell (SERIAL = CP2112 serial = cycler)
+  results.csv                  one line per cell and run (appended, never overwritten; shared by all
+                               cyclers, column "cycler"): capacity, energy, DC resistance,
                                charged capacity, ... - also written for an aborted run (status column)
 
 Usage:
@@ -36,6 +37,8 @@ Usage:
   ./cycling.py --rest 60             rest 60 min between charge and discharge
   ./cycling.py --rint 0              no internal resistance measurement (default every 5 min)
   ./cycling.py --status              read-only: print one readout of all cells and exit
+  ./cycling.py --cycler 9BFD         several cyclers connected: use the one whose CP2112 serial
+                                     ends with 9BFD (./hwtest.py --list shows them)
 Afterwards ./transport.py brings the cells to the transport voltage.
 """
 import argparse
@@ -181,7 +184,7 @@ def setup_gauges(bus, new_cell):
 
 
 # ----------------------------------------------------------------- results ---
-RESULT_COLUMNS = ["start", "end", "log", "ch", "cell_id", "status",
+RESULT_COLUMNS = ["start", "end", "log", "cycler", "ch", "cell_id", "status",
                   "capacity_mAh", "energy_Wh", "R_dc_mOhm", "R_min_mOhm", "R_max_mOhm", "R_n",
                   "I_load_mA", "t_discharge_h", "U_ocv_full_mV", "charge_mAh", "t_charge_h",
                   "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw"]
@@ -217,8 +220,8 @@ def run(bus, args):
     acc = {ch: {"mAh": 0.0, "mWh": 0.0, "R": [], "rem_start": None} for ch in CHANNELS}
 
     stamp = datetime.now()
-    logname = stamp.strftime("cycling_%Y%m%d_%H%M%S.csv")
-    res = {ch: {"start": stamp.isoformat(timespec="seconds"), "log": logname, "ch": ch,
+    logname = stamp.strftime(f"cycling_{args.serial}_%Y%m%d_%H%M%S.csv")
+    res = {ch: {"start": stamp.isoformat(timespec="seconds"), "log": logname, "cycler": args.serial, "ch": ch,
                 "cell_id": ids[ch], "status": "ABORTED in DISCHARGE1", "empty_mV": empty_mv,
                 "gauge_fw": f"0x{fws[ch]:04X}" if ch in fws else "", "T_max_C": None}
            for ch in CHANNELS}
@@ -226,7 +229,7 @@ def run(bus, args):
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
                   "RemCap_mAh", "R_mOhm"])
-    print(f"Logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
+    print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
           f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
           + (f"R every {rint_s / 60:.0f} min" if rint_s else "no R measurement"))
 
@@ -417,12 +420,10 @@ def main():
                     help=f"rest between the initial discharge and charge in minutes (default {REST_EMPTY_MIN})")
     ap.add_argument("--rint", type=float, default=RINT_MIN, metavar="MIN",
                     help=f"internal resistance measurement period in minutes, 0 = off (default {RINT_MIN})")
+    hw.add_cycler_arg(ap)
     args = ap.parse_args()
 
-    dev = hw.find_cp2112_bus()
-    if dev is None:
-        sys.exit("CP2112 I2C bus not found")
-    bus = hw.Bus(dev)
+    bus, args.serial = hw.open_cycler(args)
     if args.status:
         status(bus)
         return 0

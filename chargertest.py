@@ -133,9 +133,11 @@ def load_test(bus, loads, chargers):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--loads", action="store_true", help="also test discharge loads (LED4..LED7, H = ON)")
+    hw.add_cycler_arg(ap)
     args = ap.parse_args()
 
-    bus = hw.Bus(hw.find_cp2112_bus())
+    bus, serial = hw.open_cycler(args)
+    print(f"Cycler {serial}")
     chargers = Chargers()            # starts with all chargers OFF
     loads = Loads(bus)               # starts with all loads OFF
     try:

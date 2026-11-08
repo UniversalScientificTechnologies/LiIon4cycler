@@ -16,8 +16,14 @@ Steps:
   4. read all chargers (registers chosen by firmware) and print values + configuration read-back
 Exit code is the number of failed checks (0 = all OK).
 
+Usage:
+  ./hwtest.py                    the only connected cycler
+  ./hwtest.py --list             serial numbers of all connected cyclers (CP2112)
+  ./hwtest.py --cycler 9BFD      cycler with CP2112 serial ending ...9BFD (TX/RX LEDs blink)
+
 No external dependencies; uses I2C_RDWR and HIDIOC[GS]FEATURE ioctls directly.
 """
+import argparse
 import ctypes
 import threading
 import fcntl
@@ -46,12 +52,106 @@ class i2c_rdwr_ioctl_data(ctypes.Structure):
     _fields_ = [("msgs", ctypes.POINTER(i2c_msg)), ("nmsgs", ctypes.c_uint32)]
 
 
+# ------------------------------------------------- cycler selection (USB serial) ---
+# Several cyclers on one computer are told apart by the USB serial number of their CP2112
+# (USBI2C01).  Select one with --cycler SERIAL (any script) or the environment variable
+# CYCLER=SERIAL; a unique end of the serial number is enough.  With a single CP2112 connected
+# nothing has to be selected.
+_selected = os.environ.get("CYCLER") or None
+_lock = None
+
+
+def list_cp2112():
+    """All connected CP2112: list of {"serial", "i2c": /dev/i2c-N, "hidraw": /dev/hidrawN}."""
+    out = []
+    for d in sorted(glob.glob("/sys/bus/hid/devices/*")):
+        try:
+            with open(d + "/uevent") as f:
+                ue = dict(line.split("=", 1) for line in f.read().splitlines() if "=" in line)
+        except OSError:
+            continue
+        if ue.get("HID_ID", "").upper() != "0003:" + CP2112_HID_ID.upper():
+            continue
+        i2c = glob.glob(d + "/i2c-*")
+        raw = glob.glob(d + "/hidraw/hidraw*")
+        out.append({"serial": ue.get("HID_UNIQ", ""),
+                    "i2c": "/dev/" + os.path.basename(i2c[0]) if i2c else None,
+                    "hidraw": "/dev/" + os.path.basename(raw[0]) if raw else None})
+    return out
+
+
+def select_cycler(serial):
+    """Choose the cycler by (the end of) its CP2112 serial number; None = the only one connected."""
+    global _selected
+    if serial:
+        _selected = serial
+
+
+def cycler():
+    """The selected CP2112 (dict from list_cp2112()); exits with a message if none / ambiguous."""
+    devs = list_cp2112()
+    names = ", ".join(d["serial"] or "?" for d in devs) or "none"
+    if _selected:
+        m = [d for d in devs if d["serial"].upper().endswith(_selected.upper())]
+        if len(m) != 1:
+            raise SystemExit(f"cycler '{_selected}' " + ("not found" if not m else "is ambiguous")
+                             + f" (connected CP2112: {names})")
+        return m[0]
+    if not devs:
+        raise SystemExit("no CP2112 (USBI2C01) found - connected? hid_cp2112 driver loaded?")
+    if len(devs) > 1:
+        raise SystemExit(f"{len(devs)} cyclers connected (CP2112 serial: {names}) - "
+                         f"select one with --cycler SERIAL or CYCLER=SERIAL")
+    return devs[0]
+
+
+def cycler_serial():
+    return cycler()["serial"]
+
+
+def lock_cycler(force=False):
+    """Exclusive use of the selected cycler by this process (flock, released on exit).
+    Returns the serial number; exits if another script uses the same cycler (unless force)."""
+    global _lock
+    serial = cycler_serial()
+    if _lock is None:
+        f = open(f"/tmp/liion4cycler-{serial or 'noserial'}.lock", "a+")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.seek(0)
+            who = f.read().strip() or "?"
+            f.close()
+            if not force:
+                raise SystemExit(f"cycler {serial} is in use by PID {who} - stop it first")
+            print(f"WARNING: cycler {serial} is in use by PID {who} (forced)")
+            return serial
+        f.seek(0)
+        f.truncate()
+        f.write(f"{os.getpid()} {' '.join(os.path.basename(a) for a in sys.argv)}\n")
+        f.flush()
+        _lock = f
+    return serial
+
+
+def add_cycler_arg(ap):
+    ap.add_argument("--cycler", metavar="SERIAL",
+                    help="CP2112 serial number (or its unique end) of the cycler to use; "
+                         "needed only with several cyclers connected (also env CYCLER)")
+
+
+def open_cycler(args, lock=True):
+    """Select the cycler from args.cycler, lock it and open its I2C bus -> (Bus, serial)."""
+    select_cycler(getattr(args, "cycler", None))
+    serial = lock_cycler() if lock else cycler_serial()
+    dev = cycler()["i2c"]
+    if dev is None:
+        raise SystemExit(f"cycler {serial}: CP2112 has no I2C bus (hid_cp2112 driver loaded?)")
+    return Bus(dev), serial
+
+
 def find_cp2112_bus():
-    for p in glob.glob("/sys/bus/i2c/devices/i2c-*/name"):
-        with open(p) as f:
-            if "CP2112" in f.read():
-                return "/dev/" + p.split("/")[-2]
-    return None
+    return cycler()["i2c"]
 
 
 class Bus:
@@ -101,11 +201,7 @@ def _hid_ioc(nr, size):
 
 
 def find_cp2112_hidraw():
-    for p in glob.glob("/sys/class/hidraw/hidraw*/device/uevent"):
-        with open(p) as f:
-            if CP2112_HID_ID in f.read():
-                return "/dev/" + p.split("/")[4]
-    return None
+    return cycler()["hidraw"]
 
 
 class CP2112Gpio:
@@ -433,15 +529,27 @@ def main():
         warnings.append(msg)
         print(f"  WARNING: {msg}")
 
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_cycler_arg(ap)
+    ap.add_argument("--list", action="store_true", help="list connected cyclers (CP2112 serial numbers)")
+    args = ap.parse_args()
+    if args.list:
+        for d in list_cp2112():
+            print(f"{d['serial'] or '?':<12} {d['i2c']}  {d['hidraw']}")
+        return 0
+    select_cycler(args.cycler)
+    serial = lock_cycler()
+    print(f"Cycler {serial}")
+
     # 1) USBI2C LEDs
-    print("[1] USBI2C01 (CP2112): blinking TX/RX LEDs ...")
+    print("[1] USBI2C01 (CP2112): blinking TX/RX LEDs - identifies this cycler ...")
     try:
         blink_usbi2c()
         print("  OK")
     except (OSError, RuntimeError) as e:
         fail(f"USBI2C01 GPIO: {e}")
 
-    dev = sys.argv[1] if len(sys.argv) > 1 else find_cp2112_bus()
+    dev = find_cp2112_bus()
     if dev is None:
         fail("CP2112 I2C bus not found (is hid_cp2112 loaded?)")
         return len(errors)
