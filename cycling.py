@@ -25,6 +25,9 @@ Sequence (each cell independently, runs once):
 
 Logs:
   cycling_SERIAL_YYYYmmdd_HHMMSS.csv  every sample of every cell (SERIAL = CP2112 serial = cycler)
+  calibration.csv              voltage/current calibration per cycler (CP2112 serial) and channel;
+                               without an entry the gauge values are used as they are.  Log column
+                               cal = 1 if calibrated, U_raw_mV / I_raw_mA = gauge values
   results.csv                  one line per cell and run (appended, never overwritten; shared by all
                                cyclers, column "cycler"): capacity, energy, DC resistance,
                                charged capacity, ... - also written for an aborted run (status column)
@@ -140,8 +143,9 @@ class Loads:
 
 # ------------------------------------------------------------------ gauges ---
 def read_cell(bus, ch):
+    """Gauge readout with the cycler calibration applied (d["cal"] = calibration used)."""
     hw.mux_select(bus, ch)
-    return hw.read_gauge_retry(bus)
+    return hw.apply_calibration(hw.read_gauge_retry(bus), getattr(bus, "cal", {}).get(ch))
 
 
 def fmt_cell(ch, d, state):
@@ -187,13 +191,20 @@ def setup_gauges(bus, new_cell):
 RESULT_COLUMNS = ["start", "end", "log", "cycler", "ch", "cell_id", "status",
                   "capacity_mAh", "energy_Wh", "R_dc_mOhm", "R_min_mOhm", "R_max_mOhm", "R_n",
                   "I_load_mA", "t_discharge_h", "U_ocv_full_mV", "charge_mAh", "t_charge_h",
-                  "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw"]
+                  "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw", "calibrated"]
 
 
 def write_results(res, path=RESULTS_FILE):
     new = not os.path.exists(path) or os.path.getsize(path) == 0
+    cols = RESULT_COLUMNS
+    if not new:                                 # keep the columns of an existing (older) file
+        with open(path, newline="") as f:
+            cols = next(csv.reader(f), RESULT_COLUMNS)
+        missing = [c for c in RESULT_COLUMNS if c not in cols]
+        if missing:
+            print(f"WARNING: {path} has an older header, not written: {', '.join(missing)}")
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=RESULT_COLUMNS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         if new:
             w.writeheader()
         for ch in CHANNELS:
@@ -223,12 +234,13 @@ def run(bus, args):
     logname = stamp.strftime(f"cycling_{args.serial}_%Y%m%d_%H%M%S.csv")
     res = {ch: {"start": stamp.isoformat(timespec="seconds"), "log": logname, "cycler": args.serial, "ch": ch,
                 "cell_id": ids[ch], "status": "ABORTED in DISCHARGE1", "empty_mV": empty_mv,
+                "calibrated": "yes" if ch in getattr(bus, "cal", {}) else "no",
                 "gauge_fw": f"0x{fws[ch]:04X}" if ch in fws else "", "T_max_C": None}
            for ch in CHANNELS}
     logf = open(logname, "w", newline="")
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
-                  "RemCap_mAh", "R_mOhm"])
+                  "RemCap_mAh", "R_mOhm", "cal", "U_raw_mV", "I_raw_mA"])
     print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
           f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
           + (f"R every {rint_s / 60:.0f} min" if rint_s else "no R measurement"))
@@ -323,7 +335,7 @@ def run(bus, args):
                         print(f"  ch{ch}: R not measured, current step only {di} mA")
                 log.writerow([datetime.now().isoformat(timespec="seconds"), round(now - t0, 1), ch,
                               st, int(load_on), d["U_mV"], d["I_mA"], d["T_C"], d["SoC_%"],
-                              d["RemCap_mAh"], r_mohm])
+                              d["RemCap_mAh"], r_mohm, int(d["cal"]), d["U_raw_mV"], d["I_raw_mA"]])
 
                 if d["T_C"] > MAX_TEMP_C:
                     raise RuntimeError(f"ch{ch}: temperature {d['T_C']} C > {MAX_TEMP_C} C")

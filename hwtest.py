@@ -141,13 +141,67 @@ def add_cycler_arg(ap):
 
 
 def open_cycler(args, lock=True):
-    """Select the cycler from args.cycler, lock it and open its I2C bus -> (Bus, serial)."""
+    """Select the cycler from args.cycler, lock it, open its I2C bus and load its calibration
+    (bus.cal, see load_calibration) -> (Bus, serial)."""
     select_cycler(getattr(args, "cycler", None))
     serial = lock_cycler() if lock else cycler_serial()
     dev = cycler()["i2c"]
     if dev is None:
         raise SystemExit(f"cycler {serial}: CP2112 has no I2C bus (hid_cp2112 driver loaded?)")
-    return Bus(dev), serial
+    bus = Bus(dev)
+    bus.serial = serial
+    bus.cal = load_calibration(serial)
+    print(cal_info(bus))
+    return bus, serial
+
+
+# ------------------------------------------------------------- calibration ---
+# calibration.csv next to the scripts, one line per cycler channel:
+#   cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note     ('#' lines are comments)
+# corrected = gauge value * gain + offset.  No line for a channel = gauge values used as they are.
+CAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration.csv")
+CAL_FIELDS = (("U_gain", 1.0), ("U_offset_mV", 0.0), ("I_gain", 1.0), ("I_offset_mA", 0.0))
+
+
+def load_calibration(serial, path=CAL_FILE):
+    """{ch: {"U_gain", "U_offset_mV", "I_gain", "I_offset_mA"}} of the cycler; {} if none."""
+    import csv
+    cal = {}
+    try:
+        with open(path, newline="") as f:
+            lines = [l for l in f if l.strip() and not l.lstrip().startswith("#")]
+    except FileNotFoundError:
+        return cal
+    for n, r in enumerate(csv.DictReader(lines), 2):
+        try:
+            if (r.get("cycler") or "").strip().upper() != (serial or "").upper():
+                continue
+            cal[int(r["ch"])] = {k: float(r.get(k) or dflt) for k, dflt in CAL_FIELDS}
+        except (KeyError, TypeError, ValueError) as e:
+            raise SystemExit(f"{path}: bad calibration line {n} ({e}): {r}")
+    return cal
+
+
+def cal_info(bus):
+    cal = getattr(bus, "cal", {})
+    name = os.path.basename(CAL_FILE)
+    if not cal:
+        return (f"Calibration: none for cycler {getattr(bus, 'serial', '?')} in {name} "
+                f"- gauge values used as they are")
+    missing = [ch for ch in CHARGER_CHANNELS if ch not in cal]
+    return (f"Calibration: {name}, " + ", ".join(f"ch{ch}" for ch in sorted(cal))
+            + (f"  (no calibration for " + ", ".join(f"ch{ch}" for ch in missing) + ")" if missing else ""))
+
+
+def apply_calibration(d, c):
+    """Correct U_mV / I_mA of a read_gauge() dict with calibration c (or None); keeps the raw
+    values in U_raw_mV / I_raw_mA and sets d["cal"]."""
+    d["U_raw_mV"], d["I_raw_mA"] = d["U_mV"], d["I_mA"]
+    if c:
+        d["U_mV"] = round(d["U_mV"] * c["U_gain"] + c["U_offset_mV"])
+        d["I_mA"] = round(d["I_mA"] * c["I_gain"] + c["I_offset_mA"])
+    d["cal"] = bool(c)
+    return d
 
 
 def find_cp2112_bus():
@@ -540,6 +594,9 @@ def main():
     select_cycler(args.cycler)
     serial = lock_cycler()
     print(f"Cycler {serial}")
+    cal = load_calibration(serial)
+    print(f"  calibration.csv: " + (", ".join(f"ch{ch}" for ch in sorted(cal)) if cal else "no entry")
+          + " - this test prints raw gauge values (use them for calibration)")
 
     # 1) USBI2C LEDs
     print("[1] USBI2C01 (CP2112): blinking TX/RX LEDs - identifies this cycler ...")

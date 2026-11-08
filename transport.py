@@ -69,7 +69,7 @@ def main():
     logf = open(logname, "w", newline="")
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
-                  "RemCap_mAh", "R_mOhm"])
+                  "RemCap_mAh", "R_mOhm", "cal", "U_raw_mV", "I_raw_mA"])
     print(f"Cycler {serial}: target OCV {target} +- {tol} mV, rest {rest_s / 60:.0f} min, logging to {logname}")
 
     def enter(ch, st, now, msg):
@@ -105,7 +105,7 @@ def main():
                 st = state[ch]
                 log.writerow([datetime.now().isoformat(timespec="seconds"), round(now - t0, 1), ch,
                               st, int(st == "DISCHARGE"), d["U_mV"], d["I_mA"], d["T_C"], d["SoC_%"],
-                              d["RemCap_mAh"], ""])
+                              d["RemCap_mAh"], "", int(d["cal"]), d["U_raw_mV"], d["I_raw_mA"]])
                 if d["T_C"] > MAX_TEMP_C:
                     raise RuntimeError(f"ch{ch}: temperature {d['T_C']} C > {MAX_TEMP_C} C")
                 in_state = now - since[ch]

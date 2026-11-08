@@ -32,7 +32,8 @@ def main():
         name = datetime.now().strftime(f"monitor_{serial}_%Y%m%d_%H%M%S.csv")
         log = open(name, "w", newline="")
         writer = csv.writer(log)
-        writer.writerow(["time", "ch", "U_mV", "I_mA", "T_C", "SoC_%", "RemCap_mAh", "FullCap_mAh"])
+        writer.writerow(["time", "ch", "U_mV", "I_mA", "T_C", "SoC_%", "RemCap_mAh", "FullCap_mAh",
+                         "cal", "U_raw_mV", "I_raw_mA"])
         print(f"logging to {name}")
 
     hdr = " | ".join(f"ch{ch}:    U mV    I mA     T C  SoC" for ch in CHANNELS)
@@ -51,7 +52,8 @@ def main():
                     cols.append(f"     {d['U_mV']:>7} {d['I_mA']:>7} {d['T_C']:>7.1f} {d['SoC_%']:>3}%")
                     if writer:
                         writer.writerow([now.isoformat(timespec="seconds"), ch, d["U_mV"], d["I_mA"],
-                                         d["T_C"], d["SoC_%"], d["RemCap_mAh"], d["FullCap_mAh"]])
+                                         d["T_C"], d["SoC_%"], d["RemCap_mAh"], d["FullCap_mAh"],
+                                         int(d["cal"]), d["U_raw_mV"], d["I_raw_mA"]])
                 except OSError as e:
                     cols.append(f"     {'ERROR ' + str(e.errno):>27}")
             hw.mux_select(bus, None)

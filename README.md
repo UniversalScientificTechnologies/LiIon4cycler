@@ -75,7 +75,8 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    - discharge current;
    - voltage after charge and charged capacity;
    - maximum temperature;
-   - the cycler serial and the status (`OK` or `ABORTED in …`).
+   - the cycler serial and the status (`OK` or `ABORTED in …`);
+   - whether a calibration was used (`calibrated`).
 
    The file is only ever appended to, never overwritten.
 6. **Prepare the cells for transport.** This sets each cell to 3.5 V open-circuit:
@@ -85,6 +86,20 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    Then disconnect the cells first and USB second. Without USB the chargers switch on by themselves.
 
 For a quick look at the cells without changing anything, use `./cycling.py --status`. For continuous readings, use `./monitor.py`.
+
+## Calibration
+
+Voltage and current readings are corrected per cycler and channel from `calibration.csv` (next to the scripts). There is one line per channel; the cycler is identified by its CP2112 serial number:
+
+```
+cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
+00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"bench meter: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A"
+```
+
+- Corrected value = gauge value × gain + offset (mV, mA). Lines starting with `#` are comments.
+- With one calibration point: gain = meter reading / gauge reading, offset = 0. `./hwtest.py` prints the raw gauge values to compare against the meter.
+- A channel without a line uses the gauge values as they are. The scripts print at start which channels are calibrated.
+- The logs show whether calibration was used: column `cal` (1/0) and the raw gauge values `U_raw_mV` and `I_raw_mA`. `results.csv` has the column `calibrated`.
 
 ## Several cyclers on one computer
 
@@ -106,3 +121,4 @@ Log names contain the serial number, for example `cycling_00A59BFD_20261108_1254
 | `transport_<serial>_<date>.csv` | Progress of `transport.py`, same columns. |
 | `monitor_<serial>_<date>.csv` | Log of `monitor.py --log`. |
 | `results.csv` | Summary results of the tests. |
+| `calibration.csv` | Calibration per cycler and channel (configuration, kept in git). |
