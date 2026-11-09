@@ -68,7 +68,12 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 ## Měření kapacity a vnitřního odporu
 
 - **Kapacita** se počítá sčítáním okamžitého proudu z gauge během vybíjení ze stavu plného nabití. Výsledek souhlasil s `RemainingCapacity()` gauge na 2–3 %.
-- Vybíjení do 3,5 V pod zátěží nevybije článek celý, zůstává podstatná část kapacity. Pro srovnání s katalogovou kapacitou je potřeba vybíjet na 2,5–3,0 V (`--empty`).
+- Vybíjení do 3,5 V pod zátěží nevybije článek celý, zůstává podstatná část kapacity. Pro srovnání s katalogovou kapacitou je potřeba vybíjet níž.
+- Proto se od listopadu 2026 vybíjí ve dvou úrovních:
+  - Úvodní vybití (definovaný výchozí stav před nabitím) končí na 3,5 V (`--empty-pre`).
+  - Vybití pro měření kapacity končí na 2,8 V (`--empty`). Výsledky změřené s 3,5 V a s 2,8 V nejsou srovnatelné; konec vybíjení je v `results.csv` ve sloupci `empty_mV`.
+- Po vybití na 2,8 V se 10 min zapisuje do logu, jak se napětí bez zátěže zotavuje (stav `REST3`). Do výpočtů se nepoužívá.
+- Potom se článek dobije, dokud napětí při nabíjení nedosáhne 3,5 V (stav `CHARGE3`), a test skončí. Článek tak nezůstane hluboko vybitý a má napětí vhodné pro zápis do data flash gauge (nad ≈ 2,9 V) při dalším spuštění. Přesné transportní napětí nastaví `transport.py`.
 - **DC vnitřní odpor:** během vybíjení se zátěž každých 5 min odpojí a odpor se spočte jako R = (U_off − U_on) / (I_off − I_on). Započítávají se do něj i kontakty, vodiče a bočník. Hodnoty níže jsou z prvních testů, kdy se zátěž odpojovala jen na ≈ 2 s:
 
   | Kanál | Odpor |

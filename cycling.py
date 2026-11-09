@@ -12,12 +12,18 @@ Start: every gauge is identified and its data flash configuration checked (hwtes
   previous cell (Qmax, Ra tables, cycle count) are discarded; --same-cells keeps them.
 
 Sequence (each cell independently, runs once):
-  DISCHARGE1  load ON until U <= --empty (EMPTY_COUNT samples in a row) - defined empty start
+  DISCHARGE1  load ON until U <= --empty-pre (default 3500 mV, EMPTY_COUNT samples in a row)
+              - defined start state
   REST1       load OFF, wait --rest-empty minutes (default 10)
   CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
-  DISCHARGE2  load ON until U <= --empty -> measured capacity (integrated current) and energy
-  DONE        load OFF
+  DISCHARGE2  load ON until U <= --empty (default 2800 mV) -> measured capacity (integrated current)
+              and energy
+  REST3       load OFF, voltage recovery logged for --rest-after minutes (default 10); log only,
+              not used for any result
+  CHARGE3     charger ON until U under charge >= --final (default 3500 mV, EMPTY_COUNT samples in
+              a row), then charger OFF; the result is not checked (./transport.py sets the exact OCV)
+  DONE        charger and load OFF
   During both discharges the load is switched OFF for --rint-off seconds (default 3) every --rint
   minutes to measure the DC internal resistance R = (U_off - U_on) / (I_off - I_on): U_on/I_on read
   just before switching OFF, U_off/I_off read exactly --rint-off s later (the gauge updates once
@@ -39,7 +45,10 @@ Usage:
   ./cycling.py --cells A1,A2,A3,A4   cell labels for results.csv (ch0..ch3, empty = no cell id)
   ./cycling.py --same-cells          continue with the same cells (keep learned gauge values)
   ./cycling.py --skip-predischarge   start with CHARGE (no DISCHARGE1 / REST1)
-  ./cycling.py --empty 3000          discharge end voltage under load [mV] (default 3500)
+  ./cycling.py --empty 3000          capacity discharge end voltage under load [mV] (default 2800)
+  ./cycling.py --empty-pre 3600      initial discharge end voltage under load [mV] (default 3500)
+  ./cycling.py --final 3600          final charge end voltage under charge [mV] (default 3500)
+  ./cycling.py --rest-after 20       log the voltage recovery for 20 min after the capacity discharge
   ./cycling.py --rest 60             rest 60 min between charge and discharge
   ./cycling.py --rint 0              no internal resistance measurement (default every 5 min)
   ./cycling.py --rint-off 5          load OFF for 5 s per R measurement (default 3 s)
@@ -67,7 +76,10 @@ FET_LED = {0: 4, 1: 5, 2: 6, 3: 7}        # mux channel -> PCA9531 output switch
 FULL_MV = 4100          # charge finished: voltage at least ...
 FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates ~130 mA)
 FULL_HOLD_S = 30        # ... for this long
-EMPTY_MV = 3500         # default discharge end (voltage under load)
+EMPTY_PRE_MV = 3500     # default end of the initial discharge (voltage under load)
+EMPTY_MV = 2800         # default end of the capacity discharge (voltage under load)
+FINAL_MV = 3500         # default end of the final charge (voltage under charge)
+REST_AFTER_MIN = 10     # default voltage recovery logging after the capacity discharge [min]
 EMPTY_COUNT = 3         # consecutive samples below the empty voltage
 MAX_TEMP_C = 55.0       # any cell above -> abort (everything off)
 CHARGE_TIMEOUT_S = 8 * 3600
@@ -84,7 +96,7 @@ RESULTS_FILE = "results.csv"
 
 DISCHARGES = ("DISCHARGE1", "DISCHARGE2")
 SHORT = {"DISCHARGE1": "DIS1", "REST1": "RST1", "CHARGE": "CHRG", "REST2": "RST2",
-         "DISCHARGE2": "DIS2", "DONE": "DONE"}
+         "DISCHARGE2": "DIS2", "REST3": "RST3", "CHARGE3": "CHG3", "DONE": "DONE"}
 
 # ------------------------------------------------------------- CP2112 GPIO ---
 CE_MASK = sum(1 << g for g in CE_GPIO.values())
@@ -219,6 +231,7 @@ def write_results(res, path=RESULTS_FILE):
 # -------------------------------------------------------------------- main ---
 def run(bus, args):
     rest_s, rest_empty_s, rint_s, empty_mv = args.rest * 60, args.rest_empty * 60, args.rint * 60, args.empty
+    empty_pre_mv, final_mv, rest_after_s = args.empty_pre, args.final, args.rest_after * 60
     rint_off_s = args.rint_off
     ids = (args.cells.split(",") + [""] * 4)[:4] if args.cells else [""] * 4
     chargers = Chargers()
@@ -249,15 +262,19 @@ def run(bus, args):
     log = csv.writer(logf)
     log.writerow(["time", "elapsed_s", "ch", "state", "load", "U_mV", "I_mA", "T_C", "SoC_%",
                   "RemCap_mAh", "R_mOhm", "cal"])
-    print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; discharge to {empty_mv} mV, "
-          f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full), "
+    print(f"Cycler {args.serial}: logging to {logname}, results to {RESULTS_FILE}; initial discharge to "
+          f"{empty_pre_mv} mV, capacity discharge to {empty_mv} mV, final charge to {final_mv} mV, "
+          f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full) / "
+          f"{rest_after_s / 60:.0f} min (after the capacity discharge), "
           + (f"R every {rint_s / 60:.0f} min (load OFF {rint_off_s:g} s)" if rint_s else "no R measurement"))
 
     def enter(ch, st, now, msg):
         state[ch] = st
         since[ch] = now
         t_prev[ch] = now
-        res[ch]["status"] = f"ABORTED in {st}"
+        # a run aborted after the capacity discharge keeps its valid result
+        res[ch]["status"] = (f"OK, ABORTED in {st}" if res[ch]["status"].startswith("OK")
+                             else f"ABORTED in {st}")
         acc[ch].update(mAh=0.0, mWh=0.0, R=[], rem_start=None)
         print(f"  ch{ch}: {msg}")
 
@@ -282,10 +299,11 @@ def run(bus, args):
                            gauge_used_mAh=a["rem_start"] - d["RemCap_mAh"],
                            R_dc_mOhm=round(statistics.median(r), 1) if r else "",
                            R_min_mOhm=min(r) if r else "", R_max_mOhm=max(r) if r else "", R_n=len(r))
-            enter(ch, "DONE", now, f"EMPTY at {d['U_mV']} mV after {in_state / 3600:.2f} h, load OFF: "
-                  f"capacity {a['mAh']:.0f} mAh, {a['mWh'] / 1000:.2f} Wh"
-                  + (f", R {res[ch]['R_dc_mOhm']} mOhm" if r else ""))
             res[ch]["status"] = "OK"
+            enter(ch, "REST3", now, f"EMPTY at {d['U_mV']} mV after {in_state / 3600:.2f} h, load OFF: "
+                  f"capacity {a['mAh']:.0f} mAh, {a['mWh'] / 1000:.2f} Wh"
+                  + (f", R {res[ch]['R_dc_mOhm']} mOhm" if r else "")
+                  + f"; logging the voltage recovery for {rest_after_s / 60:.0f} min")
 
     time.sleep(1.0)
     t0 = time.time()
@@ -356,7 +374,8 @@ def run(bus, args):
                 if st in DISCHARGES:
                     if ch in pulse or not load_on:
                         continue                            # load OFF for R: voltage not under load
-                    low_count[ch] = low_count[ch] + 1 if d["U_mV"] <= empty_mv else 0
+                    end_mv = empty_pre_mv if st == "DISCHARGE1" else empty_mv
+                    low_count[ch] = low_count[ch] + 1 if d["U_mV"] <= end_mv else 0
                     if low_count[ch] >= EMPTY_COUNT:
                         finish_discharge(ch, now, d)
                     elif in_state > DISCHARGE_TIMEOUT_S:
@@ -392,6 +411,23 @@ def run(bus, args):
                         res[ch]["U_ocv_full_mV"] = d["U_mV"]
                         start_discharge(ch, now, "DISCHARGE2", f"rest over at {d['U_mV']} mV, load ON "
                                         f"(capacity discharge)")
+
+                elif st == "REST3":                         # voltage recovery: logged only
+                    if in_state >= rest_after_s:
+                        low_count[ch] = 0
+                        chargers.set(ch, True)
+                        enter(ch, "CHARGE3", now, f"recovered to {d['U_mV']} mV, charger ON "
+                              f"(final charge to {final_mv} mV)")
+
+                elif st == "CHARGE3":
+                    low_count[ch] = low_count[ch] + 1 if d["U_mV"] >= final_mv else 0
+                    if low_count[ch] >= EMPTY_COUNT:
+                        chargers.set(ch, False)
+                        enter(ch, "DONE", now, f"final charge stopped at {d['U_mV']} mV after "
+                              f"{in_state / 60:.0f} min, charger OFF")
+                        res[ch]["status"] = "OK"
+                    elif in_state > CHARGE_TIMEOUT_S:
+                        raise RuntimeError(f"ch{ch}: final charge timeout")
             hw.mux_select(bus, None)
             logf.flush()
 
@@ -442,8 +478,14 @@ def main():
     ap.add_argument("--cells", metavar="ID0,ID1,ID2,ID3", help="cell labels for results.csv")
     ap.add_argument("--skip-predischarge", action="store_true",
                     help="skip the initial discharge (and its rest), start with charging")
+    ap.add_argument("--empty-pre", type=int, default=EMPTY_PRE_MV, metavar="MV",
+                    help=f"initial discharge end voltage under load (default {EMPTY_PRE_MV})")
     ap.add_argument("--empty", type=int, default=EMPTY_MV, metavar="MV",
-                    help=f"discharge end voltage under load (default {EMPTY_MV})")
+                    help=f"capacity discharge end voltage under load (default {EMPTY_MV})")
+    ap.add_argument("--rest-after", type=float, default=REST_AFTER_MIN, metavar="MIN",
+                    help=f"voltage recovery logged after the capacity discharge in minutes (default {REST_AFTER_MIN})")
+    ap.add_argument("--final", type=int, default=FINAL_MV, metavar="MV",
+                    help=f"final charge end voltage under charge (default {FINAL_MV})")
     ap.add_argument("--rest", type=float, default=REST_MIN, metavar="MIN",
                     help=f"rest between charge and the capacity discharge in minutes (default {REST_MIN})")
     ap.add_argument("--rest-empty", type=float, default=REST_EMPTY_MIN, metavar="MIN",

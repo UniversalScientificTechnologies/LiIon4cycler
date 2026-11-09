@@ -126,7 +126,7 @@ Details and findings from bring-up are in [POZNATKY.md](POZNATKY.md) (Czech). Op
 | `alloff.py` | Puts the cycler into a safe state with all chargers and loads off. |
 | `chargertest.py` | Checks the charger /CE wiring; with `--loads` it also checks the loads. |
 | `monitor.py` | Reads the raw gauge values (no calibration), with chargers and loads off. Optional CSV log. |
-| `cycling.py` | Cell test: discharge → charge → discharge. Writes capacity and DC resistance to `results.csv`. |
+| `cycling.py` | Cell test: discharge → charge → discharge → charge to 3.5 V. Writes capacity and DC resistance to `results.csv`. |
 | `transport.py` | Charges or discharges the cells to the 3.5 V open-circuit transport voltage. |
 | `plotlog.py` | Live plot of voltage, current and resistance from a running log. |
 
@@ -146,26 +146,31 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    ```
    ./cycling.py --cells A1,A2,A3,A4
    ```
-   - Each cell is discharged, rests 10 min, is charged, rests 30 min and is discharged again. The capacity (mAh, Wh) comes from the second discharge.
-   - The DC internal resistance is measured every 5 min during both discharges: the load is switched off for 3 s and R = ΔU / ΔI between the reading just before and the reading 3 s after switching off.
+   - Each cell goes through these steps:
+     1. Discharge to 3.5 V under load, then rest 10 min.
+     2. Charge to full, then rest 30 min.
+     3. Discharge to 2.8 V under load. The capacity (mAh, Wh) comes from this discharge.
+     4. Rest 10 min. The voltage recovery is only logged and is not used for any result.
+     5. Charge until the voltage under charge reaches 3.5 V, then the test ends. The resulting voltage is not checked; `transport.py` sets the exact transport voltage.
+   - The DC internal resistance is measured every 5 min during both discharges: the load is switched off for 3 s and R = ΔU / ΔI between the reading just before and the reading 3 s after switching off. The result is the median of the values from the capacity discharge.
    - At start, the gauge configuration is checked and the values the gauge learned on the previous cells are discarded. Use `--same-cells` to keep them when you continue with the same cells.
    - `--skip-predischarge` skips the initial discharge and its rest; the test starts with charging.
-   - More options: `--empty MV` (discharge end voltage, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN` (R period), `--rint-off S` (load off time for R, default 3).
+   - More options: `--empty-pre MV` (initial discharge end, default 3500), `--empty MV` (capacity discharge end, default 2800), `--rest-after MIN` (recovery logging, default 10), `--final MV` (final charge end, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN` (R period), `--rint-off S` (load off time for R, default 3).
 4. **Watch the progress** in a second terminal. Without an argument it opens the newest log:
    ```
    ./plotlog.py
    ```
 5. **Results:** `results.csv` gets one row per cell and test. Each row holds:
-   - capacity and energy;
+   - capacity and energy, and the capacity discharge end voltage (`empty_mV`);
    - DC resistance (median, min, max) and the load off time used (`R_pulse_s`);
    - discharge current;
    - voltage after charge and charged capacity;
    - maximum temperature;
-   - the cycler serial and the status (`OK` or `ABORTED in …`);
+   - the cycler serial and the status: `OK`, `ABORTED in …`, or `OK, ABORTED in REST3/CHARGE3` when the run was stopped after the capacity was already measured;
    - whether a calibration was used (`calibrated`).
 
    The file is only ever appended to, never overwritten.
-6. **Prepare the cells for transport.** This sets each cell to 3.5 V open-circuit:
+6. **Prepare the cells for transport.** `cycling.py` leaves the cells charged to about 3.5 V under charge, so their open-circuit voltage is somewhat lower. `transport.py` sets each cell exactly to 3.5 V open-circuit:
    ```
    ./transport.py
    ```
