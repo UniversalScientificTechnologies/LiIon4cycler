@@ -2,6 +2,8 @@
 
 Li-ion cell tester for 4 cells at a time. It measures the capacity and the DC internal resistance of each cell and then brings the cells to a transport voltage. It is built from MLAB kit modules and is controlled from a Linux computer over USB.
 
+![LiIon4cycler prototype: four LION1CELL01B boards with cells, load resistors on the heat sink, control modules at the back](cycler.jpg)
+
 ## Hardware
 
 ```
