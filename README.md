@@ -116,13 +116,14 @@ Details and findings from bring-up are in [POZNATKY.md](POZNATKY.md) (Czech). Op
 
 - Linux with the `hid_cp2112` driver, which is part of the standard kernel.
 - Python 3; no extra packages are needed, except `matplotlib` for `plotlog.py`.
-- Read/write access to the converter's `/dev/i2c-*` and `/dev/hidraw*`, for example through a udev rule for USB ID `10c4:ea90`.
+- Read/write access to the converter's `/dev/i2c-*` and `/dev/hidraw*`. On a new computer, run `./setup_permissions.sh` once (it asks for the sudo password). The script installs a udev rule for USB ID `10c4:ea90` (group `plugdev`), loads `i2c-dev` at boot and adds you to the group `plugdev`. Then log out and in again and reconnect the cycler; after that the scripts run without sudo.
 
 ## Scripts
 
 | Script | Purpose |
 |---|---|
 | `hwtest.py` | Hardware test and shared library. Blinks the LEDs, finds the gauges, identifies their firmware, loads the matching configuration and prints the readings. |
+| `setup_permissions.sh` | One-time setup of a new computer: access to the CP2112 without sudo. |
 | `alloff.py` | Puts the cycler into a safe state with all chargers and loads off. |
 | `chargertest.py` | Checks the charger /CE wiring; with `--loads` it also checks the loads. |
 | `monitor.py` | Reads the raw gauge values (no calibration), with chargers and loads off. Optional CSV log. |
