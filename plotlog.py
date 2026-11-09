@@ -103,8 +103,16 @@ def main():
             d["state"] = r.get("state", "")
             if r.get("R_mOhm"):
                 d["rt"].append(t); d["R"].append(float(r["R_mOhm"]))
-            if d["state"].startswith("DISCHARGE") and r.get("load") == "0":
-                continue        # load briefly OFF for the R measurement - keep U/I curves clean
+            if d["state"].startswith("DISCHARGE"):
+                # keep U/I curves clean: skip the load-OFF samples of the R measurement and the
+                # first sample after the load is back ON (the gauge may still report the OFF values)
+                off = r.get("load") == "0"
+                after = d.get("was_off", False)
+                d["was_off"] = off
+                if off or after:
+                    continue
+            else:
+                d["was_off"] = False
             d["t"].append(t); d["U"].append(u); d["I"].append(i)
         if not rows and lines:
             return []

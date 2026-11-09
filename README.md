@@ -5,12 +5,25 @@ Li-ion cell tester for 4 cells at a time. It measures the capacity and the DC in
 ## Hardware
 
 ```
-PC (Linux, USB)
- └─ USBI2C01 (CP2112)  USB → I2C + GPIO, serial number = cycler identification
-     ├─ I2C ─ I2CPWM01 (PCA9531 @ 0x63)   LED0–3 indicators, LED4–7 switch the discharge loads
-     ├─ I2C ─ I2CHUB02 (TCA9548A @ 0x73)  I2C multiplexer, channels 0–3
-     │         └─ ch0–ch3: LION1CELL01B   BQ24103 charger + BQ34Z100 gauge @ 0x55
-     └─ GPIO3–6 → charger /CE             H = charger off
+ PC (Linux) ── USB
+                │
+        ┌───────┴────────┐  I²C (SV2)
+        │   USBI2C01A    ├──────────────────┬───────────────────────────┐
+        │   CP2112       │                  │                           │
+        │ serial = ID    │          ┌───────┴────────┐          ┌───────┴─────────┐
+        └───────┬────────┘          │   I2CPWM01A    │          │   I2CHUB02B     │
+                │ GPIO3–6 (SV5)     │ PCA9531 @ 0x63 │          │ TCA9548A @ 0x73 │
+                │                   └──┬─────────┬───┘          └─┬───┬───┬───┬───┘
+                │           LED0–3 (L) │         │ LED4–7 (H)     │SV1│SV2│SV3│SV4 I²C ch0–3
+                │              ┌───────┴──┐ ┌────┴─────────┐      │   │   │   │
+                │              │ LED01A   │ │ 2× REL1SW01B │      │   │   │   │
+                │              │ 4 LEDs   │ │ N-MOSFET     │      │   │   │   │
+                │              └──────────┘ └────┬─────────┘      │   │   │   │
+                │                         OUT1/2 │ load resistors │   │   │   │
+                │ /CE (SV4)            ┌─────────┴────────────────┴───┴───┴───┴──┐
+                └─────────────────────►│ 4× LION1CELL01B  (ch0 … ch3)            │◄── DC jack X2
+                                       │ BQ24103 charger + BQ34Z100 gauge @ 0x55 │    on each board
+                                       └─────────────────────────────────────────┘
 ```
 
 | Cell channel | Charger /CE | Load (PCA9531) | Indicator LED |
@@ -24,6 +37,76 @@ PC (Linux, USB)
 - **Discharging:** one resistive load per channel, switched statically by a PCA9531 output (L = off, H = on).
 - **Measurement:** the BQ34Z100 gauge on each board measures voltage, current and temperature. Gauges with either of the two known firmware versions (0x0016 and 0x0006) are handled automatically.
 - Several cyclers on one computer are told apart by the serial number of their CP2112.
+
+### Wiring
+
+Connector names (SV…, J…) are the designators from the module schematics in the [mlab-modules](https://github.com/mlab-modules) repositories. On the double-row MLAB headers both pins of a row are connected together; "row n" means pins 2n−1 and 2n. All modules share one GND.
+
+**I²C bus** – USBI2C01A SV2 → I2CPWM01A J4 and I2CHUB02B (upstream port SV9, power SV10):
+
+| Signal | USBI2C01A SV2 | I2CPWM01A J4 | I2CHUB02B |
+|---|---|---|---|
+| GND | row 1, 5 | row 1, 5 | SV10 row 1, 3 |
+| SDA | row 2 | row 2 | SV9 row 2 |
+| VDD | row 3 | row 3 | SV10 row 2 (VCC) |
+| SCL | row 4 | row 4 | SV9 row 1 |
+
+- VDD is the CP2112 I/O voltage: 3.3 V or 5 V, chosen by the jumper on USBI2C01A SV3.
+- I2CPWM01A address 0x63: J1 (A0) and J2 (A1) open; A2 is tied to GND on the board.
+- I2CHUB02B address 0x73: SV12 open (A0 = A1 = 1); A2 is tied to GND on the board.
+
+**Gauges** – I2CHUB02B downstream port → LION1CELL01B SV3:
+
+| Hub port (1×5) | LION1CELL01B SV3 (2×4) |
+|---|---|
+| pin 1 GND | row 4 GND |
+| pin 2 SCn | row 2 SCL |
+| pin 3 +V1 | not connected (the gauge is powered from the cell) |
+| pin 4 SDn | row 1 SDA |
+| pin 5 GND | row 4 GND |
+
+SV3 row 3 (HDQ) is not used. The 10 kΩ pull-ups of SDn/SCn are on the hub.
+
+**Charger enable** – USBI2C01A SV5 → LION1CELL01B SV4 row 4 (/CE). LION1CELL01B SV4 is: row 1 STAT1, row 2 PG, row 3 TTC, row 4 /CE, row 5 CELLS. /CE has a 10 kΩ pull-down (R11) on the board.
+
+**Loads** – I2CPWM01A outputs LED4–LED7 drive the N-MOSFET inputs of two REL1SW01B modules.
+
+- The PCA9531 outputs are open-drain. The 1 kΩ pull-up jumpers J10–J13 must be fitted, so a released output is H and the FET is on.
+- The REL1SW01B gates have a pull-down, so a load is off when its input is not driven.
+- REL1SW01B pins:
+  - J1: row 1 IN2, row 2 IN1.
+  - J2: row 1 OUT1, row 2 OUT2 (the FET drains).
+  - J5: row 1 and row 4 GND (the FET sources), row 2 and row 3 VCC.
+- The current path is: LION1CELL01B WAGO + (SV7, +BAT) → load resistor → REL1SW01B OUTx → FET → REL1SW01B GND (J5) → LION1CELL01B WAGO − (SV8, GND).
+- The return current flows through the 10 mΩ shunt of the gauge (R2, between the cell − and GND), so the gauge measures the discharge current.
+- VCC on J5 only feeds the free-wheel diodes and is not needed with resistive loads.
+
+**Indicator LEDs** – LED01A, wired with common anodes:
+
+- Jumpers are fitted on SV2 (anode rail to the series resistors). SV1 has no jumpers.
+- The anode rail (SV3 pin 2) goes to I2CPWM01A VDD (J3 row 2).
+- The cathodes on LED01A SV1 (pin 7 = D1, 5 = D2, 3 = D3, 1 = D4) go to the I2CPWM01A outputs LED0–LED3. A LED lights when its output is L.
+- I2CPWM01A pull-up jumpers J6–J9 are not needed, because LED01A has its own resistors.
+
+**Per channel:**
+
+| Channel | Hub port | /CE: USBI2C01A SV5 → LION1CELL01B SV4 | Load: I2CPWM01A output (pull-up) → REL1SW01B | Indicator: I2CPWM01A output → LED01A |
+|---|---|---|---|---|
+| ch0 | SV1 | row 4 (GPIO6) → row 4 | LED4 J18 (J10) → #1 IN1, OUT1 | LED0 J14 → D1 |
+| ch1 | SV2 | row 3 (GPIO5) → row 4 | LED5 J19 (J11) → #1 IN2, OUT2 | LED1 J15 → D2 |
+| ch2 | SV3 | row 2 (GPIO4) → row 4 | LED6 J20 (J12) → #2 IN1, OUT1 | LED2 J16 → D3 |
+| ch3 | SV4 | row 1 (GPIO3) → row 4 | LED7 J21 (J13) → #2 IN2, OUT2 | LED3 J17 → D4 |
+
+USBI2C01A SV5 row 5 (GPIO7) is not used. The USBI2C01A TX/RX LEDs (GPIO0/GPIO1) blink during `hwtest.py`.
+
+**Power:**
+
+| Module | Supply |
+|---|---|
+| USBI2C01A | USB |
+| I2CPWM01A, I2CHUB02B | VDD from USBI2C01A SV2 |
+| LED01A | VDD from I2CPWM01A J3 |
+| LION1CELL01B | Own adapter in the DC jack X2 on each board; SV1 row 2 is the same input. The gauge and the board logic run from the cell. |
 
 Details and findings from bring-up are in [POZNATKY.md](POZNATKY.md) (Czech). Open work is in [TODO.md](TODO.md).
 
