@@ -70,9 +70,10 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
   - R19 = 30k dává ≈ 333 mA nabíjecího proudu.
   - R18 = 30k dává ≈ 33 mA proudu předběžného nabíjení a konce nabíjení. S původními 133 mA by nabíjení při 350 mA skončilo příliš brzy.
   - Zatím je to provedeno pokusně jen na jedné nabíječce.
-- **Bezpečnostní časovač nabíječky** nastavuje C3 = 100 nF na TTC: 2,6 min/nF ≈ 4,3 h. Při 350 mA trvá nabití článku 3500 mAh ≈ 10 h, nabíječka by tedy skončila po ≈ 1500 mAh.
-  - Proto se TTC (LION1CELL01B SV4 řádek 3) připojí na GND, což časovač vypne. Časový limit nabíjení pak hlídá `cycling.py` (`CHARGE_TIMEOUT_S` = 16 h) a po jeho vypršení vypne nabíječku daného kanálu přes /CE.
-  - Podle datasheetu ověřit, zda TTC na GND nevypíná i ukončení nabíjení proudem. Pokud ano, nabíječka by po nabití držela konstantní napětí, dokud ji nevypne skript. Stav FULL skript pozná sám (≥ 4100 mV a ≤ 50 mA), takže test tím ovlivněný není. Bez USB je ale /CE stažené na L a nabíječka by nabíjela bez časového limitu, proto po skončení práce odpoj články dřív než USB.
+- **Bezpečnostní časovač nabíječky** nastavuje C3 na TTC: 2,6 min/nF. Původní C3 = 100 nF dává ≈ 4,3 h. Nabití článku 3500 mAh (LG MJ1) proudem 333 mA trvá ≈ 11,5–12 h z úplně vybitého stavu (samotných 3500 mAh / 333 mA je 10,5 h, k tomu dobíjení konstantním napětím), v testu po úvodním vybití na 3,5 V ≈ 9–10 h. S původním C3 by nabíječka skončila po ≈ 1500 mAh.
+  - Proto se C3 mění na 470 nF, časovač pak dává ≈ 20,4 h.
+  - Hlavní časový limit hlídá `cycling.py` (`CHARGE_TIMEOUT_S` = 16 h), který po vypršení vypne nabíječku daného kanálu přes /CE. Časovač nabíječky je záloha pro případ, kdy skript neběží (bez USB je /CE stažené na L a nabíječka nabíjí sama).
+  - Podle datasheetu ověřit povolený rozsah kondenzátoru na TTC a časový limit předběžného nabíjení, který z něj vychází (u bq2410x obvykle 1/10, tedy ≈ 2 h).
 
 ## Úpravy modulů oproti standardní výrobě
 
@@ -82,9 +83,9 @@ Změny, kterými se moduly v cycleru liší od standardně vyráběných MLAB mo
 |---|---|---|---|---|
 | LION1CELL01B | R19 (ISET1) | 7k5 (≈ 1,33 A) | 30k (≈ 333 mA) | nabíjecí proud jako vybíjecí proud |
 | LION1CELL01B | R18 (ISET2) | 7k5 (≈ 133 mA) | 30k (≈ 33 mA) | proud předběžného nabíjení a konce nabíjení úměrný nižšímu nabíjecímu proudu |
-| LION1CELL01B | TTC, SV4 řádek 3 | nezapojeno (C3 = 100 nF, ≈ 4,3 h) | propojka na GND | vypnutý bezpečnostní časovač, limit hlídá `cycling.py` |
+| LION1CELL01B | C3 (TTC) | 100 nF (≈ 4,3 h) | 470 nF (≈ 20,4 h) | bezpečnostní časovač nabíjení delší než nabití 3500 mAh proudem 333 mA |
 
-Výměna R18 a R19 je zatím provedená jen pokusně na jedné nabíječce (viz [TODO.md](TODO.md)).
+Výměna R18, R19 a C3 je zatím provedená jen pokusně na jedné nabíječce (viz [TODO.md](TODO.md)).
 
 ## Měření kapacity a vnitřního odporu
 

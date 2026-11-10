@@ -35,7 +35,7 @@ Li-ion cell tester for 4 cells at a time. It measures the capacity and the DC in
 | ch2 | GPIO4 | LED6 | LED2 |
 | ch3 | GPIO3 | LED7 | LED3 |
 
-- **Charging:** each cell has its own BQ24103 charger. The scripts switch it on and off through its /CE input. Without control from USB the chargers charge, because /CE has a pull-down. The charger's safety timer is disabled (TTC on GND); `cycling.py` limits the charge time instead. The charge current is set to about 350 mA by R19 and R18 = 30 kΩ; see the modifications in [POZNATKY.md](POZNATKY.md).
+- **Charging:** each cell has its own BQ24103 charger. The scripts switch it on and off through its /CE input. Without control from USB the chargers charge, because /CE has a pull-down. The charge current is set to about 350 mA by R19 and R18 = 30 kΩ, and the charger's safety timer to about 20.4 h by C3 = 470 nF; see the modifications in [POZNATKY.md](POZNATKY.md). `cycling.py` also limits the charge time to 16 h.
 - **Discharging:** one resistive load per channel, switched statically by a PCA9531 output (L = off, H = on).
 - **Measurement:** the BQ34Z100 gauge on each board measures voltage, current and temperature. Gauges with either of the two known firmware versions (0x0016 and 0x0006) are handled automatically.
 - Several cyclers on one computer are told apart by the serial number of their CP2112.
@@ -70,8 +70,6 @@ Connector names (SV…, J…) are the designators from the module schematics in 
 SV3 row 3 (HDQ) is not used. The 10 kΩ pull-ups of SDn/SCn are on the hub.
 
 **Charger enable** – USBI2C01A SV5 → LION1CELL01B SV4 row 4 (/CE). LION1CELL01B SV4 is: row 1 STAT1, row 2 PG, row 3 TTC, row 4 /CE, row 5 CELLS. /CE has a 10 kΩ pull-down (R11) on the board.
-
-**Charger safety timer** – LION1CELL01B SV4 row 3 (TTC) is connected to GND (for example SV3 row 4) on every board. This disables the BQ24103 safety timer, which would otherwise stop a 350 mA charge after about 4.3 h. `cycling.py` switches the charger off through /CE after 16 h instead.
 
 **Loads** – I2CPWM01A outputs LED4–LED7 drive the N-MOSFET inputs of two REL1SW01B modules.
 

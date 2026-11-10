@@ -16,7 +16,7 @@ Sequence (each cell independently, runs once):
               - defined start state
   REST1       load OFF, wait --rest-empty minutes (default 10)
   CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S.  The BQ24103
-              safety timer is disabled (TTC = GND): after CHARGE_TIMEOUT_S the script switches the
+              safety timer (C3 = 470 nF, ~20.4 h) is only a backup: after CHARGE_TIMEOUT_S the script switches the
               charger OFF through /CE (this cell -> DONE, status FAILED; the others continue)
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
   DISCHARGE2  load ON until U <= --empty (default 2800 mV) -> measured capacity (integrated current)
@@ -85,8 +85,8 @@ FINAL_MV = 3500         # default end of the final charge (voltage under charge)
 REST_AFTER_MIN = 10     # default voltage recovery logging after the capacity discharge [min]
 EMPTY_COUNT = 3         # consecutive samples below the empty voltage
 MAX_TEMP_C = 55.0       # any cell above -> abort (everything off)
-CHARGE_TIMEOUT_S = 16 * 3600       # 3500 mAh at ~350 mA takes ~10 h; the BQ24103 safety timer is
-                                   # disabled (TTC = GND), so this is the only charge time limit
+CHARGE_TIMEOUT_S = 16 * 3600       # 3500 mAh at ~333 mA takes ~11.5-12 h from empty; shorter than the
+                                   # BQ24103 safety timer (C3 = 470 nF, ~20.4 h), which is only a backup
 DISCHARGE_TIMEOUT_S = 16 * 3600    # 3500 mAh at ~340 mA (10 ohm load) takes ~10 h
 REST_MIN = 30           # default rest between charge and discharge [min]
 REST_EMPTY_MIN = 10     # default rest between the first discharge and charge [min]
