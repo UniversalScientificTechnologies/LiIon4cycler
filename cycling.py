@@ -19,7 +19,7 @@ Sequence (each cell independently, runs once):
               safety timer (C3 = 470 nF, ~20.4 h) is only a backup: after CHARGE_TIMEOUT_S the script switches the
               charger OFF through /CE (this cell -> DONE, status FAILED; the others continue)
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
-  DISCHARGE2  load ON until U <= --empty (default 2800 mV) -> measured capacity (integrated current)
+  DISCHARGE2  load ON until U <= --empty (default 2500 mV) -> measured capacity (integrated current)
               and energy
   REST3       load OFF, voltage recovery logged for --rest-after minutes (default 10); log only,
               not used for any result
@@ -47,7 +47,7 @@ Usage:
   ./cycling.py --cells A1,A2,A3,A4   cell labels for results.csv (ch0..ch3, empty = no cell id)
   ./cycling.py --same-cells          continue with the same cells (keep learned gauge values)
   ./cycling.py --skip-predischarge   start with CHARGE (no DISCHARGE1 / REST1)
-  ./cycling.py --empty 3000          capacity discharge end voltage under load [mV] (default 2800)
+  ./cycling.py --empty 3000          capacity discharge end voltage under load [mV] (default 2500)
   ./cycling.py --empty-pre 3600      initial discharge end voltage under load [mV] (default 3500)
   ./cycling.py --final 3600          final charge end voltage under charge [mV] (default 3500)
   ./cycling.py --rest-after 20       log the voltage recovery for 20 min after the capacity discharge
@@ -80,7 +80,7 @@ FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates
                         # ~33 mA with R18 = 30k, ~130 mA with the original 7k5)
 FULL_HOLD_S = 30        # ... for this long
 EMPTY_PRE_MV = 3500     # default end of the initial discharge (voltage under load)
-EMPTY_MV = 2800         # default end of the capacity discharge (voltage under load)
+EMPTY_MV = 2500         # default end of the capacity discharge (voltage under load)
 FINAL_MV = 3500         # default end of the final charge (voltage under charge)
 REST_AFTER_MIN = 10     # default voltage recovery logging after the capacity discharge [min]
 EMPTY_COUNT = 3         # consecutive samples below the empty voltage

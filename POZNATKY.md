@@ -93,8 +93,8 @@ Výměna R18, R19 a C3 je zatím provedená jen pokusně na jedné nabíječce (
 - Vybíjení do 3,5 V pod zátěží nevybije článek celý, zůstává podstatná část kapacity. Pro srovnání s katalogovou kapacitou je potřeba vybíjet níž.
 - Proto se od listopadu 2026 vybíjí ve dvou úrovních:
   - Úvodní vybití (definovaný výchozí stav před nabitím) končí na 3,5 V (`--empty-pre`).
-  - Vybití pro měření kapacity končí na 2,8 V (`--empty`). Výsledky změřené s 3,5 V a s 2,8 V nejsou srovnatelné; konec vybíjení je v `results.csv` ve sloupci `empty_mV`.
-- Po vybití na 2,8 V se 10 min zapisuje do logu, jak se napětí bez zátěže zotavuje (stav `REST3`). Do výpočtů se nepoužívá.
+  - Vybití pro měření kapacity končí na 2,5 V (`--empty`), což je konečné napětí vybíjení podle datasheetu LG MJ1 (do 10. 11. 2026 to bylo 2,8 V). Výsledky změřené s různým konečným napětím (3,5 V, 2,8 V, 2,5 V) nejsou srovnatelné; konec vybíjení je v `results.csv` ve sloupci `empty_mV`.
+- Po vybití na 2,5 V se 10 min zapisuje do logu, jak se napětí bez zátěže zotavuje (stav `REST3`). Do výpočtů se nepoužívá.
 - Potom se článek dobije, dokud napětí při nabíjení nedosáhne 3,5 V (stav `CHARGE3`), a test skončí. Článek tak nezůstane hluboko vybitý a má napětí vhodné pro zápis do data flash gauge (nad ≈ 2,9 V) při dalším spuštění. Přesné transportní napětí nastaví `transport.py`.
 - **DC vnitřní odpor:** během vybíjení se zátěž každých 5 min odpojí a odpor se spočte jako R = (U_off − U_on) / (I_off − I_on). Započítávají se do něj i kontakty, vodiče a bočník. Hodnoty níže jsou z prvních testů, kdy se zátěž odpojovala jen na ≈ 2 s:
 

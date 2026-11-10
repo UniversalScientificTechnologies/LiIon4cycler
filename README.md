@@ -151,13 +151,13 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    - Each cell goes through these steps:
      1. Discharge to 3.5 V under load, then rest 10 min.
      2. Charge to full, then rest 30 min.
-     3. Discharge to 2.8 V under load. The capacity (mAh, Wh) comes from this discharge.
+     3. Discharge to 2.5 V under load. The capacity (mAh, Wh) comes from this discharge.
      4. Rest 10 min. The voltage recovery is only logged and is not used for any result.
      5. Charge until the voltage under charge reaches 3.5 V, then the test ends. The resulting voltage is not checked; `transport.py` sets the exact transport voltage.
    - The DC internal resistance is measured every 5 min during both discharges: the load is switched off for 3 s and R = ΔU / ΔI between the reading just before and the reading 3 s after switching off. The result is the median of the values from the capacity discharge.
    - At start, the gauge configuration is checked and the values the gauge learned on the previous cells are discarded. Use `--same-cells` to keep them when you continue with the same cells.
    - `--skip-predischarge` skips the initial discharge and its rest; the test starts with charging.
-   - More options: `--empty-pre MV` (initial discharge end, default 3500), `--empty MV` (capacity discharge end, default 2800), `--rest-after MIN` (recovery logging, default 10), `--final MV` (final charge end, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN` (R period), `--rint-off S` (load off time for R, default 3).
+   - More options: `--empty-pre MV` (initial discharge end, default 3500), `--empty MV` (capacity discharge end, default 2500), `--rest-after MIN` (recovery logging, default 10), `--final MV` (final charge end, default 3500), `--rest MIN`, `--rest-empty MIN`, `--rint MIN` (R period), `--rint-off S` (load off time for R, default 3).
 4. **Watch the progress** in a second terminal. Without an argument it opens the newest log:
    ```
    ./plotlog.py
