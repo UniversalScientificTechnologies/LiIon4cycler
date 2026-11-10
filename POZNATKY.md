@@ -64,6 +64,27 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 ## Nabíječka BQ24103
 
 - Nabíječka nezačne znovu nabíjet, pokud je článek nad prahem pro dobíjení. Jednou to vedlo k falešnému stavu FULL při 4108 mV, kdy článek ve skutečnosti nebyl nabitý. Sekvence vybití → nabití → vybití tomu předchází, protože se vždy nabíjí z vybitého článku.
+- **Nabíjecí proud** nastavuje R19 na ISET1: I = 1000 × 1 V / (R_SNS × R19), kde R_SNS = R21 = 0,1 Ω (vzorec a konstanty podle datasheetu BQ24103). Původní R19 = 7k5 dává ≈ 1,33 A. Naměřeno bylo ≈ 2000 mAh za 2,2 h včetně fáze konstantního napětí.
+- **Proud předběžného nabíjení a konce nabíjení** nastavuje R18 na ISET2 stejným vzorcem s 0,1 V místo 1 V. Původní R18 = 7k5 dává ≈ 133 mA.
+- **Změna na 350 mA** (stejný proud jako vybíjení přes 10 Ω): R19 a R18 se mění na 30 kΩ.
+  - R19 = 30k dává ≈ 333 mA nabíjecího proudu.
+  - R18 = 30k dává ≈ 33 mA proudu předběžného nabíjení a konce nabíjení. S původními 133 mA by nabíjení při 350 mA skončilo příliš brzy.
+  - Zatím je to provedeno pokusně jen na jedné nabíječce.
+- **Bezpečnostní časovač nabíječky** nastavuje C3 = 100 nF na TTC: 2,6 min/nF ≈ 4,3 h. Při 350 mA trvá nabití článku 3500 mAh ≈ 10 h, nabíječka by tedy skončila po ≈ 1500 mAh.
+  - Proto se TTC (LION1CELL01B SV4 řádek 3) připojí na GND, což časovač vypne. Časový limit nabíjení pak hlídá `cycling.py` (`CHARGE_TIMEOUT_S` = 16 h) a po jeho vypršení vypne nabíječku daného kanálu přes /CE.
+  - Podle datasheetu ověřit, zda TTC na GND nevypíná i ukončení nabíjení proudem. Pokud ano, nabíječka by po nabití držela konstantní napětí, dokud ji nevypne skript. Stav FULL skript pozná sám (≥ 4100 mV a ≤ 50 mA), takže test tím ovlivněný není. Bez USB je ale /CE stažené na L a nabíječka by nabíjela bez časového limitu, proto po skončení práce odpoj články dřív než USB.
+
+## Úpravy modulů oproti standardní výrobě
+
+Změny, kterými se moduly v cycleru liší od standardně vyráběných MLAB modulů:
+
+| Modul | Součástka / zapojení | Standardně | Upraveno | Důvod |
+|---|---|---|---|---|
+| LION1CELL01B | R19 (ISET1) | 7k5 (≈ 1,33 A) | 30k (≈ 333 mA) | nabíjecí proud jako vybíjecí proud |
+| LION1CELL01B | R18 (ISET2) | 7k5 (≈ 133 mA) | 30k (≈ 33 mA) | proud předběžného nabíjení a konce nabíjení úměrný nižšímu nabíjecímu proudu |
+| LION1CELL01B | TTC, SV4 řádek 3 | nezapojeno (C3 = 100 nF, ≈ 4,3 h) | propojka na GND | vypnutý bezpečnostní časovač, limit hlídá `cycling.py` |
+
+Výměna R18 a R19 je zatím provedená jen pokusně na jedné nabíječce (viz [TODO.md](TODO.md)).
 
 ## Měření kapacity a vnitřního odporu
 

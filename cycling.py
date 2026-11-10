@@ -15,7 +15,9 @@ Sequence (each cell independently, runs once):
   DISCHARGE1  load ON until U <= --empty-pre (default 3500 mV, EMPTY_COUNT samples in a row)
               - defined start state
   REST1       load OFF, wait --rest-empty minutes (default 10)
-  CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S
+  CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S.  The BQ24103
+              safety timer is disabled (TTC = GND): after CHARGE_TIMEOUT_S the script switches the
+              charger OFF through /CE (this cell -> DONE, status FAILED; the others continue)
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
   DISCHARGE2  load ON until U <= --empty (default 2800 mV) -> measured capacity (integrated current)
               and energy
@@ -74,7 +76,8 @@ IND_LED = {0: 0, 1: 1, 2: 2, 3: 3}        # mux channel -> PCA9531 indicator LED
 FET_LED = {0: 4, 1: 5, 2: 6, 3: 7}        # mux channel -> PCA9531 output switching the load (H = ON)
 
 FULL_MV = 4100          # charge finished: voltage at least ...
-FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates ~130 mA)
+FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates at the ISET2 current:
+                        # ~33 mA with R18 = 30k, ~130 mA with the original 7k5)
 FULL_HOLD_S = 30        # ... for this long
 EMPTY_PRE_MV = 3500     # default end of the initial discharge (voltage under load)
 EMPTY_MV = 2800         # default end of the capacity discharge (voltage under load)
@@ -82,7 +85,8 @@ FINAL_MV = 3500         # default end of the final charge (voltage under charge)
 REST_AFTER_MIN = 10     # default voltage recovery logging after the capacity discharge [min]
 EMPTY_COUNT = 3         # consecutive samples below the empty voltage
 MAX_TEMP_C = 55.0       # any cell above -> abort (everything off)
-CHARGE_TIMEOUT_S = 16 * 3600       # 3500 mAh at ~350 mA takes ~10 h
+CHARGE_TIMEOUT_S = 16 * 3600       # 3500 mAh at ~350 mA takes ~10 h; the BQ24103 safety timer is
+                                   # disabled (TTC = GND), so this is the only charge time limit
 DISCHARGE_TIMEOUT_S = 16 * 3600    # 3500 mAh at ~340 mA (10 ohm load) takes ~10 h
 REST_MIN = 30           # default rest between charge and discharge [min]
 REST_EMPTY_MIN = 10     # default rest between the first discharge and charge [min]
@@ -404,7 +408,11 @@ def run(bus, args):
                     else:
                         full_since[ch] = None
                     if state[ch] == "CHARGE" and in_state > CHARGE_TIMEOUT_S:
-                        raise RuntimeError(f"ch{ch}: charge timeout")
+                        chargers.set(ch, False)             # this cell only, the others continue
+                        res[ch].update(charge_mAh=round(a["mAh"]), t_charge_h=round(in_state / 3600, 2))
+                        enter(ch, "DONE", now, f"CHARGE TIMEOUT after {in_state / 3600:.1f} h at "
+                              f"{d['U_mV']} mV {d['I_mA']} mA ({a['mAh']:.0f} mAh charged), charger OFF")
+                        res[ch]["status"] = "FAILED: charge timeout"
 
                 elif st == "REST2":
                     if in_state >= rest_s:
@@ -427,7 +435,10 @@ def run(bus, args):
                               f"{in_state / 60:.0f} min, charger OFF")
                         res[ch]["status"] = "OK"
                     elif in_state > CHARGE_TIMEOUT_S:
-                        raise RuntimeError(f"ch{ch}: final charge timeout")
+                        chargers.set(ch, False)             # capacity already measured: result stays OK
+                        enter(ch, "DONE", now, f"FINAL CHARGE TIMEOUT after {in_state / 3600:.1f} h at "
+                              f"{d['U_mV']} mV, charger OFF")
+                        res[ch]["status"] = "OK, final charge timeout"
             hw.mux_select(bus, None)
             logf.flush()
 
