@@ -147,6 +147,7 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    ```
    ./cycling.py --cells A1,A2,A3,A4
    ```
+   - **Do not touch the cells or their holders while the test is running.** Moving a cell changes the contact resistance of the holder, which changes the measured internal resistance and affects the capacity measurement.
    - Each cell goes through these steps:
      1. Discharge to 3.5 V under load, then rest 10 min.
      2. Charge to full, then rest 30 min.
