@@ -14,7 +14,7 @@ Li-ion cell tester for 4 cells at a time. It measures the capacity and the DC in
         │   CP2112       │                  │                           │
         │ serial = ID    │          ┌───────┴────────┐          ┌───────┴─────────┐
         └───────┬────────┘          │   I2CPWM01A    │          │   I2CHUB02B     │
-                │ GPIO3–6 (SV5)     │ PCA9531 @ 0x63 │          │ TCA9548A @ 0x73 │
+                │ GPIO3–6 (SV5)     │ PCA9531 @ 0x63 │          │ TCA9548A @ 0x7x │
                 │                   └──┬─────────┬───┘          └─┬───┬───┬───┬───┘
                 │           LED0–3 (L) │         │ LED4–7 (H)     │SV1│SV2│SV3│SV4 I²C ch0–3
                 │              ┌───────┴──┐ ┌────┴─────────┐      │   │   │   │
@@ -55,7 +55,7 @@ Connector names (SV…, J…) are the designators from the module schematics in 
 
 - VDD is the CP2112 I/O voltage: 3.3 V or 5 V, chosen by the jumper on USBI2C01A SV3.
 - I2CPWM01A address 0x63: J1 (A0) and J2 (A1) open; A2 is tied to GND on the board.
-- I2CHUB02B address 0x73: SV12 open (A0 = A1 = 1); A2 is tied to GND on the board.
+- I2CHUB02B address 0x70–0x73 (SV12 jumpers A0, A1; A2 is tied to GND on the board). The scripts scan all four addresses and use the one that answers; exactly one hub must be present. Default with SV12 open: 0x73.
 
 **Gauges** – I2CHUB02B downstream port → LION1CELL01B SV3:
 
@@ -124,6 +124,7 @@ Details and findings from bring-up are in [POZNATKY.md](POZNATKY.md) (Czech). Op
 |---|---|
 | `hwtest.py` | Hardware test and shared library. Blinks the LEDs, finds the gauges, identifies their firmware, loads the matching configuration and prints the readings. |
 | `setup_permissions.sh` | One-time setup of a new computer: access to the CP2112 without sudo. |
+| `gaugetest.py` | Tests one LION1CELL01B gauge connected directly to USBI2C01A, without the hub and without a cell (lab supply on the WAGO terminals). Identifies it, reads its values and checks its configuration; `--configure` writes it. Wiring is in `./gaugetest.py --help`. |
 | `alloff.py` | Puts the cycler into a safe state with all chargers and loads off. |
 | `chargertest.py` | Checks the charger /CE wiring; with `--loads` it also checks the loads. |
 | `monitor.py` | Reads the raw gauge values (no calibration), with chargers and loads off. Optional CSV log. |

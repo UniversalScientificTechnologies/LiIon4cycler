@@ -5,7 +5,7 @@ Topology:
   CP2112 (USBI2C01)  -- /dev/i2c-N (kernel hid_cp2112) + /dev/hidrawN for GPIO
    +-- PCA9531 LED driver (I2CPWM01) @ 0x63, open-drain
    |     LED0..3 indicators (anode -> VDD), LED4..7 loads (L = OFF, H = ON)
-   +-- TCA9548A mux (I2CHUB02) @ 0x73
+   +-- TCA9548A mux (I2CHUB02) @ 0x70..0x73 (found by scanning, see find_mux)
          +-- ch0..ch3: BQ34Z100 gauge (LION1CELL01B) @ 0x55
 
 Steps:
@@ -34,7 +34,7 @@ import time
 
 CP2112_HID_ID = "000010C4:0000EA90"
 PWM_ADDR = 0x63
-MUX_ADDR = 0x73
+MUX_ADDRS = (0x70, 0x71, 0x72, 0x73)   # possible I2CHUB02 addresses (A0, A1 jumpers; A2 = GND)
 GAUGE_ADDR = 0x55
 CHARGER_CHANNELS = (0, 1, 2, 3)
 
@@ -323,9 +323,30 @@ def blink_i2cpwm(bus):
 
 
 # ---------------------------------------------------- mux + BQ34Z100 gauge ---
+def scan_mux(bus):
+    """Addresses from MUX_ADDRS that answer on the bus."""
+    return [a for a in MUX_ADDRS if bus.present(a)]
+
+
+def find_mux(bus):
+    """Find the I2CHUB02 (TCA9548A) at one of MUX_ADDRS and remember it in bus.mux_addr.
+    Raises OSError if none or more than one answers."""
+    found = scan_mux(bus)
+    if len(found) != 1:
+        bus.mux_addr = None
+        raise OSError("I2CHUB02 not found at " + ", ".join(f"0x{a:02X}" for a in MUX_ADDRS) if not found
+                      else "several I2CHUB02 found (" + ", ".join(f"0x{a:02X}" for a in found)
+                      + ") - only one hub per cycler is supported")
+    bus.mux_addr = found[0]
+    return bus.mux_addr
+
+
 def mux_select(bus, ch):
-    """ch = None -> all channels off; TCA9548A control byte is a channel bitmask."""
-    bus.write(MUX_ADDR, [0 if ch is None else (1 << ch)])
+    """ch = None -> all channels off; TCA9548A control byte is a channel bitmask.
+    The hub address is found on the first call (find_mux)."""
+    if getattr(bus, "mux_addr", None) is None:
+        find_mux(bus)
+    bus.write(bus.mux_addr, [0 if ch is None else (1 << ch)])
     bus.mux_ch = ch
 
 
@@ -630,11 +651,13 @@ def main():
         fail(f"I2CPWM01 @ 0x{PWM_ADDR:02X} not responding ({e})")
 
     # 3) chargers
-    print(f"[3] Chargers via I2CHUB02 (TCA9548A @ 0x{MUX_ADDR:02X}) ...")
+    print("[3] Chargers via I2CHUB02 (TCA9548A @ " + "/".join(f"0x{a:02X}" for a in MUX_ADDRS) + ") ...")
     try:
+        find_mux(bus)
+        print(f"  I2CHUB02 found @ 0x{bus.mux_addr:02X}")
         mux_select(bus, None)
     except OSError as e:
-        fail(f"I2CHUB02 @ 0x{MUX_ADDR:02X} not responding ({e})")
+        fail(f"I2CHUB02: {e}")
     else:
         fws = {}
         print("  identifying gauges (known FW: " + ", ".join(
