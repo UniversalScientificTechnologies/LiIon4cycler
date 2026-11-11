@@ -168,10 +168,10 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    - discharge current;
    - voltage after charge and charged capacity;
    - maximum temperature;
-   - the cycler serial and the status: `OK`, `ABORTED in …`, or `OK, ABORTED in REST3/CHARGE3` when the run was stopped after the capacity was already measured;
+   - the cycler serial and the status: `OK`, `FAILED: charge timeout`, or `ABORTED in …`;
    - whether a calibration was used (`calibrated`).
 
-   The file is only ever appended to, never overwritten.
+   A cell's row is written as soon as its capacity discharge ends, so you do not have to wait for the recovery logging and the final charge. Rows of runs aborted before that are written when the script ends. The file is only ever appended to, never overwritten.
 6. **Prepare the cells for transport.** `cycling.py` leaves the cells charged to about 3.5 V under charge, so their open-circuit voltage is somewhat lower. `transport.py` sets each cell exactly to 3.5 V open-circuit:
    ```
    ./transport.py

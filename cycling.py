@@ -40,7 +40,9 @@ Logs:
                                display use calibrated values; log column cal = 1 if calibrated
   results.csv                  one line per cell and run (appended, never overwritten; shared by all
                                cyclers, column "cycler"): capacity, energy, DC resistance,
-                               charged capacity, ... - also written for an aborted run (status column)
+                               charged capacity, ... - a cell's line is appended as soon as its
+                               result is known (end of DISCHARGE2, or charge timeout), not after
+                               REST3/CHARGE3; an aborted run is written at the end (status column)
 
 Usage:
   ./cycling.py                       new cells, log to cycling_YYYYmmdd_HHMMSS.csv
@@ -215,7 +217,7 @@ RESULT_COLUMNS = ["start", "end", "log", "cycler", "ch", "cell_id", "status",
                   "predischarge_mAh", "gauge_used_mAh", "T_max_C", "empty_mV", "gauge_fw", "calibrated"]
 
 
-def write_results(res, path=RESULTS_FILE):
+def write_results(rows, path=RESULTS_FILE):
     new = not os.path.exists(path) or os.path.getsize(path) == 0
     cols = RESULT_COLUMNS
     if not new:                                 # keep the columns of an existing (older) file
@@ -228,8 +230,8 @@ def write_results(res, path=RESULTS_FILE):
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         if new:
             w.writeheader()
-        for ch in CHANNELS:
-            w.writerow(res[ch])
+        for r in rows:
+            w.writerow(r)
 
 
 # -------------------------------------------------------------------- main ---
@@ -253,6 +255,7 @@ def run(bus, args):
     pulse = {}                                  # ch -> (t_off, U_on, I_on, pos) while load is OFF for R;
                                                 # pos = t_off - start of its poll (channel position)
     acc = {ch: {"mAh": 0.0, "mWh": 0.0, "R": [], "rem_start": None} for ch in CHANNELS}
+    written = set()                             # channels whose line is already in results.csv
 
     stamp = datetime.now()
     logname = stamp.strftime(f"cycling_{args.serial}_%Y%m%d_%H%M%S.csv")
@@ -271,6 +274,16 @@ def run(bus, args):
           f"rest {rest_empty_s / 60:.0f} min (empty) / {rest_s / 60:.0f} min (full) / "
           f"{rest_after_s / 60:.0f} min (after the capacity discharge), "
           + (f"R every {rint_s / 60:.0f} min (load OFF {rint_off_s:g} s)" if rint_s else "no R measurement"))
+
+    def save_result(ch):
+        """Append the cell's line to results.csv as soon as its result is known."""
+        res[ch]["end"] = datetime.now().isoformat(timespec="seconds")
+        try:
+            write_results([res[ch]])
+            written.add(ch)
+            print(f"  ch{ch}: result appended to {RESULTS_FILE}")
+        except OSError as e:                    # retried at the end of the run
+            print(f"  ch{ch}: WARNING: could not write {RESULTS_FILE} ({e}), retrying at the end")
 
     def enter(ch, st, now, msg):
         state[ch] = st
@@ -308,6 +321,8 @@ def run(bus, args):
                   f"capacity {a['mAh']:.0f} mAh, {a['mWh'] / 1000:.2f} Wh"
                   + (f", R {res[ch]['R_dc_mOhm']} mOhm" if r else "")
                   + f"; logging the voltage recovery for {rest_after_s / 60:.0f} min")
+            res[ch]["status"] = "OK"            # enter() set "OK, ABORTED in REST3"
+            save_result(ch)
 
     time.sleep(1.0)
     t0 = time.time()
@@ -413,6 +428,7 @@ def run(bus, args):
                         enter(ch, "DONE", now, f"CHARGE TIMEOUT after {in_state / 3600:.1f} h at "
                               f"{d['U_mV']} mV {d['I_mA']} mA ({a['mAh']:.0f} mAh charged), charger OFF")
                         res[ch]["status"] = "FAILED: charge timeout"
+                        save_result(ch)
 
                 elif st == "REST2":
                     if in_state >= rest_s:
@@ -469,10 +485,12 @@ def run(bus, args):
         logf.close()
         print("Loads OFF, chargers OFF")
         end = datetime.now().isoformat(timespec="seconds")
-        for ch in CHANNELS:
+        pending = [ch for ch in CHANNELS if ch not in written]
+        for ch in pending:
             res[ch]["end"] = end
-        write_results(res)
-        print(f"\nResults (appended to {RESULTS_FILE}):")
+        if pending:
+            write_results([res[ch] for ch in pending])
+        print(f"\nResults ({RESULTS_FILE}):")
         for ch in CHANNELS:
             r = res[ch]
             print(f"  ch{ch} {r['cell_id'] or '-':<8} {r['status']:<20} "
