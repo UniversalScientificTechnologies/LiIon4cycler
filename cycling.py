@@ -58,7 +58,10 @@ Usage:
   ./cycling.py --rint-off 5          load OFF for 5 s per R measurement (default 3 s)
   ./cycling.py --status              read-only: print one readout of all cells and exit
   ./cycling.py --cycler 9BFD         several cyclers connected: use the one whose CP2112 serial
-                                     ends with 9BFD (./hwtest.py --list shows them)
+                                     ends with 9BFD (./hwtest.py --list shows them); without
+                                     --cycler the first cycler not in use is taken, so a second
+                                     ./cycling.py takes the next one (--status needs --cycler);
+                                     the TX/RX LEDs of the cycler used blink at start
 Afterwards ./transport.py brings the cells to the transport voltage.
 """
 import argparse
@@ -529,10 +532,15 @@ def main():
 
     if args.rint_off < RINT_OFF_MIN_S:
         ap.error(f"--rint-off must be at least {RINT_OFF_MIN_S:g} s")
-    bus, args.serial = hw.open_cycler(args)
+    bus, args.serial = hw.open_cycler(args, auto=not args.status)
     if args.status:
         status(bus)
         return 0
+    print(f"Cycler {args.serial}: blinking TX/RX LEDs on USBI2C01 ...")
+    try:
+        hw.blink_usbi2c()                       # shows which cycler this run uses
+    except (OSError, RuntimeError) as e:
+        print(f"WARNING: TX/RX LEDs not blinked ({e})")
     try:
         return run(bus, args)
     except KeyboardInterrupt:

@@ -99,7 +99,7 @@ SV3 row 3 (HDQ) is not used. The 10 kΩ pull-ups of SDn/SCn are on the hub.
 | ch2 | SV3 | row 2 (GPIO4) → row 4 | LED6 J20 (J12) → #2 IN1, OUT1 | LED2 J16 → D3 |
 | ch3 | SV4 | row 1 (GPIO3) → row 4 | LED7 J21 (J13) → #2 IN2, OUT2 | LED3 J17 → D4 |
 
-USBI2C01A SV5 row 5 (GPIO7) is not used. The USBI2C01A TX/RX LEDs (GPIO0/GPIO1) blink during `hwtest.py`.
+USBI2C01A SV5 row 5 (GPIO7) is not used. The USBI2C01A TX/RX LEDs (GPIO0/GPIO1) blink during `hwtest.py` and at the start of `cycling.py`.
 
 **Power:**
 
@@ -200,11 +200,15 @@ cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
 
 ```
 ./hwtest.py --list                    # serial numbers of connected CP2112 converters
+./hwtest.py                           # test every cycler that is not in use (cycling skipped)
 ./hwtest.py --cycler 9BFD             # test one cycler (its TX/RX LEDs blink)
-./cycling.py --cycler 9BFD --cells …  # a unique end of the serial number is enough
+./cycling.py --cells …                # takes the first free cycler; a second start takes the next
+./cycling.py --cycler 9BFD --cells …  # a specific cycler (a unique end of the serial number is enough)
 CYCLER=9BFD ./monitor.py              # same, via environment variable
 ./alloff.py --all                     # switch off every cycler that is not in use
 ```
+
+`cycling.py` prints the serial number of the cycler it took at start and blinks its TX/RX LEDs, so you can see which cycler the run uses. The other scripts (`transport.py`, `monitor.py`, …) still need `--cycler` when several cyclers are connected.
 
 Log names contain the serial number, for example `cycling_00A59BFD_20261108_125405.csv`. All cyclers write to the same `results.csv`; the `cycler` column tells the rows apart.
 

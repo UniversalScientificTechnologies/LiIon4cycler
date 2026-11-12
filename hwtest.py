@@ -14,10 +14,11 @@ Steps:
   3. identify every BQ34Z100 gauge (device type, firmware), then write the data flash
      configuration matching its firmware (GAUGE_CONFIGS, only differing values are written)
   4. read all chargers (registers chosen by firmware) and print values + configuration read-back
-Exit code is the number of failed checks (0 = all OK).
+Exit code is the number of failed checks (0 = all OK), summed over the tested cyclers.
 
 Usage:
-  ./hwtest.py                    the only connected cycler
+  ./hwtest.py                    the only connected cycler; with several: every one not in use
+                                 by another script (a running cycling.py is skipped)
   ./hwtest.py --list             serial numbers of all connected cyclers (CP2112)
   ./hwtest.py --cycler 9BFD      cycler with CP2112 serial ending ...9BFD (TX/RX LEDs blink)
 
@@ -134,17 +135,44 @@ def lock_cycler(force=False):
     return serial
 
 
+def release_cycler():
+    """Release the lock taken by lock_cycler (to lock another cycler in the same process)."""
+    global _lock
+    if _lock is not None:
+        _lock.close()
+        _lock = None
+
+
+def lock_free_cycler():
+    """No cycler selected and several connected: select and lock the first one not in use by
+    another script (the next start of the same script then takes the next one)."""
+    global _selected
+    devs = list_cp2112()
+    if _selected or len(devs) <= 1:
+        return lock_cycler()
+    busy = []
+    for d in devs:
+        _selected = d["serial"]
+        try:
+            return lock_cycler()
+        except SystemExit as e:
+            busy.append(str(e))
+    _selected = None
+    raise SystemExit("all connected cyclers are in use:\n  " + "\n  ".join(busy))
+
+
 def add_cycler_arg(ap):
     ap.add_argument("--cycler", metavar="SERIAL",
                     help="CP2112 serial number (or its unique end) of the cycler to use; "
                          "needed only with several cyclers connected (also env CYCLER)")
 
 
-def open_cycler(args, lock=True, calibrated=True):
+def open_cycler(args, lock=True, calibrated=True, auto=False):
     """Select the cycler from args.cycler, lock it, open its I2C bus and load its calibration
-    (bus.cal, see load_calibration; calibrated=False -> none, raw values) -> (Bus, serial)."""
+    (bus.cal, see load_calibration; calibrated=False -> none, raw values) -> (Bus, serial).
+    auto=True: without a selection and with several cyclers connected, take the first free one."""
     select_cycler(getattr(args, "cycler", None))
-    serial = lock_cycler() if lock else cycler_serial()
+    serial = (lock_free_cycler() if auto else lock_cycler()) if lock else cycler_serial()
     dev = cycler()["i2c"]
     if dev is None:
         raise SystemExit(f"cycler {serial}: CP2112 has no I2C bus (hid_cp2112 driver loaded?)")
@@ -594,6 +622,46 @@ def read_gauge_retry(bus, tries=2):
 
 # ------------------------------------------------------------------- main ---
 def main():
+    global _selected
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_cycler_arg(ap)
+    ap.add_argument("--list", action="store_true", help="list connected cyclers (CP2112 serial numbers)")
+    args = ap.parse_args()
+    if args.list:
+        for d in list_cp2112():
+            print(f"{d['serial'] or '?':<12} {d['i2c']}  {d['hidraw']}")
+        return 0
+    select_cycler(args.cycler)
+    devs = list_cp2112()
+    if _selected or len(devs) <= 1:
+        return test_cycler(lock_cycler())
+
+    # several cyclers, none selected: test every one that no other script (cycling) is using
+    summary = []
+    total = 0
+    for d in devs:
+        select_cycler(d["serial"])
+        release_cycler()
+        try:
+            serial = lock_cycler()
+        except SystemExit as e:
+            print(f"\n=== Cycler {d['serial']}: SKIPPED - {e}")
+            summary.append(f"{d['serial']}: skipped (in use)")
+            continue
+        print(f"\n=== Cycler {serial} ===")
+        n = test_cycler(serial)
+        total += n
+        summary.append(f"{serial}: " + ("all OK" if not n else f"{n} error(s)"))
+    release_cycler()
+    _selected = None
+    print("\nALL CYCLERS:")
+    for s in summary:
+        print(f"  {s}")
+    return total
+
+
+def test_cycler(serial):
+    """Full test of the selected (and locked) cycler; returns the number of failed checks."""
     errors = []
     warnings = []
 
@@ -605,16 +673,6 @@ def main():
         warnings.append(msg)
         print(f"  WARNING: {msg}")
 
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    add_cycler_arg(ap)
-    ap.add_argument("--list", action="store_true", help="list connected cyclers (CP2112 serial numbers)")
-    args = ap.parse_args()
-    if args.list:
-        for d in list_cp2112():
-            print(f"{d['serial'] or '?':<12} {d['i2c']}  {d['hidraw']}")
-        return 0
-    select_cycler(args.cycler)
-    serial = lock_cycler()
     print(f"Cycler {serial}")
     cal = load_calibration(serial)
     print(f"  calibration.csv: " + (", ".join(f"ch{ch}" for ch in sorted(cal)) if cal else "no entry")
