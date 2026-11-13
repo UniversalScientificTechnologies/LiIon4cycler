@@ -35,7 +35,7 @@ Li-ion cell tester for 4 cells at a time. It measures the capacity and the DC in
 | ch2 | GPIO4 | LED6 | LED2 |
 | ch3 | GPIO3 | LED7 | LED3 |
 
-- **Charging:** each cell has its own BQ24103 charger. The scripts switch it on and off through its /CE input. Without control from USB the chargers charge, because /CE has a pull-down. The charge current is set to about 350 mA by R19 and R18 = 30 kΩ, and the charger's safety timer to about 20.4 h by C3 = 470 nF; see the modifications in [POZNATKY.md](POZNATKY.md). `cycling.py` also limits the charge time to 16 h.
+- **Charging:** each cell has its own BQ24103 charger. The scripts switch it on and off through its /CE input. Without control from USB the chargers charge, because /CE has a pull-down. The charge current is set to about 350 mA by R19 and R18 = 30.1 kΩ (30k1), and the charger's safety timer to about 20.4 h by C3 = 470 nF; see the modifications in [POZNATKY.md](POZNATKY.md). `cycling.py` also limits the charge time to 16 h.
 - **Discharging:** one resistive load per channel, switched statically by a PCA9531 output (L = off, H = on).
 - **Measurement:** the BQ34Z100 gauge on each board measures voltage, current and temperature. Gauges with either of the two known firmware versions (0x0016 and 0x0006) are handled automatically.
 - Several cyclers on one computer are told apart by the serial number of their CP2112.
@@ -169,7 +169,7 @@ Every script has `--help`. Only one script can use a cycler at a time; a second 
    - discharge current;
    - voltage after charge and charged capacity;
    - maximum temperature;
-   - the cycler serial and the status: `OK`, `FAILED: charge timeout`, or `ABORTED in …`;
+   - the cycler serial and the status: `OK`, `FAILED: charge timeout`, `FAILED: charger stopped` (the charger stopped by itself and did not recover after 4 restarts through /CE), or `ABORTED in …`;
    - whether a calibration was used (`calibrated`).
 
    A cell's row is written as soon as its capacity discharge ends, so you do not have to wait for the recovery logging and the final charge. Rows of runs aborted before that are written when the script ends. The file is only ever appended to, never overwritten.
@@ -187,11 +187,12 @@ Voltage and current readings are corrected per cycler and channel from `calibrat
 
 ```
 cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
-00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"UNI-T UT804: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
+00A59BFD,0,1.001003,0,0.969325,0,2026-11-13,"Rigol DM3058: 3.591 V -> 3.5946 V, 326 mA -> 316 mA"
 ```
 
 - Corrected value = gauge value × gain + offset (mV, mA). Lines starting with `#` are comments.
-- With one calibration point: gain = meter reading / gauge reading, offset = 0.
+- With one calibration point: gain = meter reading / gauge reading, offset = 0. The gauge reading must be raw (uncalibrated), e.g. from `monitor.py` or `hwtest.py`.
+- Reference meter since 2026-11-13: Rigol DM3058 with calibration certificate OTK26269-C6331-BAC (both cyclers, 00A59BFD and 00AC4D02).
 - A channel without a line uses the gauge values as they are. The scripts print at start which channels are calibrated.
 - `cycling.py` and `transport.py` display and log calibrated values. The log column `cal` (1/0) shows whether calibration was used; `results.csv` has the column `calibrated`.
 - `hwtest.py` and `monitor.py` show raw gauge values, for comparison with a reference meter.

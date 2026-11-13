@@ -17,14 +17,19 @@ Sequence (each cell independently, runs once):
   REST1       load OFF, wait --rest-empty minutes (default 10)
   CHARGE      charger ON; FULL when U >= FULL_MV and |I| <= FULL_MA for FULL_HOLD_S.  The BQ24103
               safety timer (C3 = 470 nF, ~20.4 h) is only a backup: after CHARGE_TIMEOUT_S the script switches the
-              charger OFF through /CE (this cell -> DONE, status FAILED; the others continue)
+              charger OFF through /CE (this cell -> DONE, status FAILED; the others continue).
+              Charger stopped by itself (current <= STALL_MA for STALL_S while the cell is not full,
+              e.g. the fixed ~30 min BQ24103 precharge timer below ~3.0 V): restarted by a /CE toggle,
+              at most MAX_CHARGE_RESTARTS times per charge phase, then DONE (FAILED: charger stopped)
   REST2       charger OFF, wait --rest minutes (default 30) for the voltage to settle (OCV full)
   DISCHARGE2  load ON until U <= --empty (default 2500 mV) -> measured capacity (integrated current)
               and energy
   REST3       load OFF, voltage recovery logged for --rest-after minutes (default 10); log only,
               not used for any result
   CHARGE3     charger ON until U under charge >= --final (default 3500 mV, EMPTY_COUNT samples in
-              a row), then charger OFF; the result is not checked (./transport.py sets the exact OCV)
+              a row), then charger OFF; the result is not checked (./transport.py sets the exact OCV).
+              From ~2.75 V after the capacity discharge the charger starts in precharge (~33 mA) and its
+              fixed ~30 min precharge timer may expire below 3.0 V: restarted as in CHARGE
   DONE        charger and load OFF
   During both discharges the load is switched OFF for --rint-off seconds (default 3) every --rint
   minutes to measure the DC internal resistance R = (U_off - U_on) / (I_off - I_on): U_on/I_on read
@@ -82,7 +87,7 @@ FET_LED = {0: 4, 1: 5, 2: 6, 3: 7}        # mux channel -> PCA9531 output switch
 
 FULL_MV = 4100          # charge finished: voltage at least ...
 FULL_MA = 50            # ... and charger current dropped to (BQ24103 terminates at the ISET2 current:
-                        # ~33 mA with R18 = 30k, ~130 mA with the original 7k5)
+                        # ~33 mA with R18 = 30k1, ~130 mA with the original 7k5)
 FULL_HOLD_S = 30        # ... for this long
 EMPTY_PRE_MV = 3500     # default end of the initial discharge (voltage under load)
 EMPTY_MV = 2500         # default end of the capacity discharge (voltage under load)
@@ -100,6 +105,11 @@ RINT_MIN = 5            # internal resistance measurement period during discharg
 RINT_OFF_S = 3.0        # default load OFF time before the "off" reading for R [s]
 RINT_OFF_MIN_S = 1.5    # shorter: the 1 s gauge values would still include the load-ON period
 RINT_MIN_DI_MA = 100    # current step needed for a valid measurement
+STALL_MA = 10           # charger current at or below this while the cell is not full = charger stopped
+STALL_S = 120           # ... for this long -> restart the charger by a /CE high->low toggle
+CE_TOGGLE_S = 1.0       # /CE held high this long for the restart
+MAX_CHARGE_RESTARTS = 4 # restarts per charge phase; the BQ24103 precharge timer is fixed ~30 min
+                        # (24-36 min, not set by C3), 33 mA precharge from ~2.75 V needs more
 MAX_I2C_ERRORS = 5      # consecutive failed readouts of one cell -> abort
 RESULTS_FILE = "results.csv"
 
@@ -259,6 +269,9 @@ def run(bus, args):
                                                 # pos = t_off - start of its poll (channel position)
     acc = {ch: {"mAh": 0.0, "mWh": 0.0, "R": [], "rem_start": None} for ch in CHANNELS}
     written = set()                             # channels whose line is already in results.csv
+    stall_since = {ch: None for ch in CHANNELS} # charger current ~0 while not full since
+    restarts = {ch: 0 for ch in CHANNELS}       # charger restarts in the current charge phase
+    ce_off = {}                                 # ch -> time /CE was set high for a restart
 
     stamp = datetime.now()
     logname = stamp.strftime(f"cycling_{args.serial}_%Y%m%d_%H%M%S.csv")
@@ -291,6 +304,9 @@ def run(bus, args):
     def enter(ch, st, now, msg):
         state[ch] = st
         since[ch] = now
+        stall_since[ch] = None
+        restarts[ch] = 0
+        ce_off.pop(ch, None)
         t_prev[ch] = now
         # a run aborted after the capacity discharge keeps its valid result
         res[ch]["status"] = (f"OK, ABORTED in {st}" if res[ch]["status"].startswith("OK")
@@ -326,6 +342,32 @@ def run(bus, args):
                   + f"; logging the voltage recovery for {rest_after_s / 60:.0f} min")
             res[ch]["status"] = "OK"            # enter() set "OK, ABORTED in REST3"
             save_result(ch)
+
+    def charger_stalled(ch, d, now, not_full):
+        """Watch a charging cell: the BQ24103 stops on its own (precharge timer fault after ~30 min
+        below V_LOWV ~3.0 V, safety timer, ...) and the current drops to 0.  A /CE high->low toggle
+        resets its timers and faults, so the charger is restarted up to MAX_CHARGE_RESTARTS times.
+        Returns True when the charger stopped and the restarts are used up."""
+        if ch in ce_off:                        # restart in progress: /CE back low
+            if now - ce_off[ch] >= CE_TOGGLE_S:
+                del ce_off[ch]
+                chargers.set(ch, True)
+                stall_since[ch] = None
+            return False
+        if not not_full or d["I_mA"] > STALL_MA:
+            stall_since[ch] = None
+            return False
+        stall_since[ch] = stall_since[ch] or now
+        if now - stall_since[ch] < STALL_S:
+            return False
+        if restarts[ch] >= MAX_CHARGE_RESTARTS:
+            return True
+        restarts[ch] += 1
+        chargers.set(ch, False)
+        ce_off[ch] = now
+        print(f"  ch{ch}: charger stopped at {d['U_mV']} mV ({d['I_mA']} mA for {now - stall_since[ch]:.0f} s), "
+              f"restarting it ({restarts[ch]}/{MAX_CHARGE_RESTARTS})")
+        return False
 
     time.sleep(1.0)
     t0 = time.time()
@@ -425,7 +467,14 @@ def run(bus, args):
                                   f"({a['mAh']:.0f} mAh charged), charger OFF, resting")
                     else:
                         full_since[ch] = None
-                    if state[ch] == "CHARGE" and in_state > CHARGE_TIMEOUT_S:
+                    if state[ch] == "CHARGE" and charger_stalled(ch, d, now, d["U_mV"] < FULL_MV):
+                        chargers.set(ch, False)
+                        res[ch].update(charge_mAh=round(a["mAh"]), t_charge_h=round(in_state / 3600, 2))
+                        enter(ch, "DONE", now, f"CHARGER STOPPED at {d['U_mV']} mV after {in_state / 3600:.1f} h "
+                              f"and {MAX_CHARGE_RESTARTS} restarts ({a['mAh']:.0f} mAh charged), charger OFF")
+                        res[ch]["status"] = "FAILED: charger stopped"
+                        save_result(ch)
+                    elif state[ch] == "CHARGE" and in_state > CHARGE_TIMEOUT_S:
                         chargers.set(ch, False)             # this cell only, the others continue
                         res[ch].update(charge_mAh=round(a["mAh"]), t_charge_h=round(in_state / 3600, 2))
                         enter(ch, "DONE", now, f"CHARGE TIMEOUT after {in_state / 3600:.1f} h at "
@@ -453,6 +502,11 @@ def run(bus, args):
                         enter(ch, "DONE", now, f"final charge stopped at {d['U_mV']} mV after "
                               f"{in_state / 60:.0f} min, charger OFF")
                         res[ch]["status"] = "OK"
+                    elif charger_stalled(ch, d, now, True):
+                        chargers.set(ch, False)             # capacity already measured: result stays OK
+                        enter(ch, "DONE", now, f"FINAL CHARGE: CHARGER STOPPED at {d['U_mV']} mV after "
+                              f"{MAX_CHARGE_RESTARTS} restarts, charger OFF")
+                        res[ch]["status"] = "OK, final charge stopped"
                     elif in_state > CHARGE_TIMEOUT_S:
                         chargers.set(ch, False)             # capacity already measured: result stays OK
                         enter(ch, "DONE", now, f"FINAL CHARGE TIMEOUT after {in_state / 3600:.1f} h at "

@@ -1,10 +1,21 @@
 # LiIon4cycler calibration, one line per cycler channel.
 # cycler = CP2112 (USBI2C01) serial number, ch = cell channel 0..3
 # corrected = gauge value * gain + offset   (voltage in mV, current in mA)
-# reference meter: UNI-T UT804 bench multimeter
+# reference meter: Rigol DM3058 bench multimeter, s/n DM3L202700203, calibration certificate OTK26269-C6331-BAC
+# (until 2026-11-13: UNI-T UT804 without calibration certificate, superseded lines kept below as comments).
+# Gauge values are raw (uncalibrated) readings; one point per channel, offset 0.
 # A cycler/channel without a line uses the gauge values as they are (log column cal = 0).
 cycler,ch,U_gain,U_offset_mV,I_gain,I_offset_mA,date,note
-00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"UNI-T UT804: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
-00A59BFD,1,1.000859,0,0.975794,0,2026-11-08,"UNI-T UT804: 3.609 V -> 3.6121 V, 0.661 A -> 0.645 A (discharge)"
-00A59BFD,2,1.001580,0,0.978691,0,2026-11-08,"UNI-T UT804: 3.607 V -> 3.6127 V, 0.657 A -> 0.643 A (discharge)"
-00A59BFD,3,1.000720,0,0.972973,0,2026-11-08,"UNI-T UT804: 4.165 V -> 4.168 V, 1.110 A -> 1.080 A (discharge)"
+00AC4D02,0,1.001006,0,0.990132,0,2026-11-13,"Rigol DM3058: 3.182 V -> 3.1852 V, 304 mA -> 301 mA"
+00AC4D02,1,1.001823,0,0.986885,0,2026-11-13,"Rigol DM3058: 3.126 V -> 3.1317 V, 305 mA -> 301 mA"
+00AC4D02,2,1.001086,0,0.990033,0,2026-11-13,"Rigol DM3058: 3.132 V -> 3.1354 V, 301 mA -> 298 mA"
+00AC4D02,3,1.001587,0,0.981481,0,2026-11-13,"Rigol DM3058: 3.403 V -> 3.4084 V, 324 mA -> 318 mA"
+00A59BFD,0,1.001003,0,0.969325,0,2026-11-13,"Rigol DM3058: 3.591 V -> 3.5946 V, 326 mA -> 316 mA"
+00A59BFD,1,1.000696,0,0.987578,0,2026-11-13,"Rigol DM3058: 3.593 V -> 3.5955 V, 322 mA -> 318 mA"
+00A59BFD,2,1.001701,0,0.990506,0,2026-11-13,"Rigol DM3058: 3.586 V -> 3.5921 V, 316 mA -> 313 mA"
+00A59BFD,3,1.001226,0,0.978593,0,2026-11-13,"Rigol DM3058: 3.590 V -> 3.5944 V, 327 mA -> 320 mA"
+# superseded 2026-11-13:
+# 00A59BFD,0,1.001184,0,0.963687,0,2026-11-08,"UNI-T UT804: 3.715 V -> 3.7194 V, 1.432 A -> 1.380 A (discharge)"
+# 00A59BFD,1,1.000859,0,0.975794,0,2026-11-08,"UNI-T UT804: 3.609 V -> 3.6121 V, 0.661 A -> 0.645 A (discharge)"
+# 00A59BFD,2,1.001580,0,0.978691,0,2026-11-08,"UNI-T UT804: 3.607 V -> 3.6127 V, 0.657 A -> 0.643 A (discharge)"
+# 00A59BFD,3,1.000720,0,0.972973,0,2026-11-08,"UNI-T UT804: 4.165 V -> 4.168 V, 1.110 A -> 1.080 A (discharge)"

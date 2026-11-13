@@ -66,14 +66,17 @@ Na deskách LION1CELL01B jsou dvě verze firmware se **zcela odlišným rozlože
 - Nabíječka nezačne znovu nabíjet, pokud je článek nad prahem pro dobíjení. Jednou to vedlo k falešnému stavu FULL při 4108 mV, kdy článek ve skutečnosti nebyl nabitý. Sekvence vybití → nabití → vybití tomu předchází, protože se vždy nabíjí z vybitého článku.
 - **Nabíjecí proud** nastavuje R19 na ISET1: I = 1000 × 1 V / (R_SNS × R19), kde R_SNS = R21 = 0,1 Ω (vzorec a konstanty podle datasheetu BQ24103). Původní R19 = 7k5 dává ≈ 1,33 A. Naměřeno bylo ≈ 2000 mAh za 2,2 h včetně fáze konstantního napětí.
 - **Proud předběžného nabíjení a konce nabíjení** nastavuje R18 na ISET2 stejným vzorcem s 0,1 V místo 1 V. Původní R18 = 7k5 dává ≈ 133 mA.
-- **Změna na 350 mA** (stejný proud jako vybíjení přes 10 Ω): R19 a R18 se mění na 30 kΩ.
-  - R19 = 30k dává ≈ 333 mA nabíjecího proudu.
-  - R18 = 30k dává ≈ 33 mA proudu předběžného nabíjení a konce nabíjení. S původními 133 mA by nabíjení při 350 mA skončilo příliš brzy.
+- **Změna na 350 mA** (stejný proud jako vybíjení přes 10 Ω): R19 a R18 se mění na 30,1 kΩ (30k1).
+  - R19 = 30k1 dává ≈ 332 mA nabíjecího proudu.
+  - R18 = 30k1 dává ≈ 33 mA proudu předběžného nabíjení a konce nabíjení. S původními 133 mA by nabíjení při 350 mA skončilo příliš brzy.
   - Zatím je to provedeno pokusně jen na jedné nabíječce.
 - **Bezpečnostní časovač nabíječky** nastavuje C3 na TTC: 2,6 min/nF. Původní C3 = 100 nF dává ≈ 4,3 h. Nabití článku 3500 mAh (LG MJ1) proudem 333 mA trvá ≈ 11,5–12 h z úplně vybitého stavu (samotných 3500 mAh / 333 mA je 10,5 h, k tomu dobíjení konstantním napětím), v testu po úvodním vybití na 3,5 V ≈ 9–10 h. S původním C3 by nabíječka skončila po ≈ 1500 mAh.
   - Proto se C3 mění na 470 nF, časovač pak dává ≈ 20,4 h.
   - Hlavní časový limit hlídá `cycling.py` (`CHARGE_TIMEOUT_S` = 16 h), který po vypršení vypne nabíječku daného kanálu přes /CE. Časovač nabíječky je záloha pro případ, kdy skript neběží (bez USB je /CE stažené na L a nabíječka nabíjí sama).
-  - Podle datasheetu ověřit povolený rozsah kondenzátoru na TTC a časový limit předběžného nabíjení, který z něj vychází (u bq2410x obvykle 1/10, tedy ≈ 2 h).
+  - Podle datasheetu (SLUS606P) je povolený rozsah C_TTC 10–220 nF a časovač 25–572 min. **470 nF je mimo specifikaci**; v testu nabíjení 10 h prošlo, ale přesnost časovače není zaručená.
+- **Časovač předběžného nabíjení je pevný: t_PRECHG = 24–36 min (typ. 30 min)**, nezávisí na C3. Když článek během něj nedosáhne V_LOWV (≈ 71,4 % z 4,2 V, tedy ≈ 3,0 V), nabíječka se vypne s chybou (proud 0). Sestupná hrana /CE (high → low) chybu i časovače resetuje.
+  - Po vybití na 2,5 V se článek zotaví jen na ≈ 2,75 V a proud předběžného nabíjení 33 mA (R18 = 30k1) ho za 30 min nedostane přes 3,0 V. V testu 11.–13. 11. 2026 (cycler 00AC4D02) se tak ch0–ch2 v `CHARGE3` zastavily na 2,94–2,99 V, skript čekal na 16h timeout a test skončil až o 16 h později. Jen ch3 přešel přes 3,0 V v 28. minutě.
+  - `cycling.py` proto v `CHARGE` i `CHARGE3` hlídá zastavenou nabíječku: když proud zůstane ≤ 10 mA 120 s a článek není nabitý, přepne /CE high → low a nabíječku tím znovu spustí, nejvýš 4× za jednu fázi nabíjení. Potom nabíjení ukončí (`FAILED: charger stopped`, ve `CHARGE3` `OK, final charge stopped`).
 
 ## Úpravy modulů oproti standardní výrobě
 
@@ -81,8 +84,8 @@ Změny, kterými se moduly v cycleru liší od standardně vyráběných MLAB mo
 
 | Modul | Součástka / zapojení | Standardně | Upraveno | Důvod |
 |---|---|---|---|---|
-| LION1CELL01B | R19 (ISET1) | 7k5 (≈ 1,33 A) | 30k (≈ 333 mA) | nabíjecí proud jako vybíjecí proud |
-| LION1CELL01B | R18 (ISET2) | 7k5 (≈ 133 mA) | 30k (≈ 33 mA) | proud předběžného nabíjení a konce nabíjení úměrný nižšímu nabíjecímu proudu |
+| LION1CELL01B | R19 (ISET1) | 7k5 (≈ 1,33 A) | 30k1 (≈ 332 mA) | nabíjecí proud jako vybíjecí proud |
+| LION1CELL01B | R18 (ISET2) | 7k5 (≈ 133 mA) | 30k1 (≈ 33 mA) | proud předběžného nabíjení a konce nabíjení úměrný nižšímu nabíjecímu proudu |
 | LION1CELL01B | C3 (TTC) | 100 nF (≈ 4,3 h) | 470 nF (≈ 20,4 h) | bezpečnostní časovač nabíjení delší než nabití 3500 mAh proudem 333 mA |
 
 Výměna R18, R19 a C3 je zatím provedená jen pokusně na jedné nabíječce (viz [TODO.md](TODO.md)).
@@ -111,19 +114,25 @@ Výměna R18, R19 a C3 je zatím provedená jen pokusně na jedné nabíječce (
   - Napětí bez zátěže se čte v přesný čas nezávisle na 2s cyklu měření.
   - Výsledky naměřené s různou délkou pulzu nejsou srovnatelné.
 
-## Kalibrace měření (prototyp 00A59BFD)
+## Kalibrace měření
 
-Napětí a proud z gauge byly porovnány se stolním multimetrem **UNI-T UT804**. Proud se měřil při vybíjení. Korekce je uložená v `calibration.csv`.
+Od 13. 11. 2026 se kalibruje stolním multimetrem **Rigol DM3058** (v. č. DM3L202700203) s kalibračním listem **OTK26269-C6331-BAC**. Korekce je uložená v `calibration.csv`. Hodnoty gauge jsou surové (nekalibrované), proud se měřil při ≈ 300–330 mA.
 
-| Kanál | Napětí gauge → UT804 | Proud gauge → UT804 | Zisk U | Zisk I |
-|---|---|---|---|---|
-| ch0 | 3,715 → 3,7194 V | 1,432 → 1,380 A | 1,001184 | 0,963687 |
-| ch1 | 3,609 → 3,6121 V | 0,661 → 0,645 A | 1,000859 | 0,975794 |
-| ch2 | 3,607 → 3,6127 V | 0,657 → 0,643 A | 1,001580 | 0,978691 |
-| ch3 | 4,165 → 4,168 V | 1,110 → 1,080 A | 1,000720 | 0,972973 |
+| Cycler | Kanál | Napětí gauge → DM3058 | Proud gauge → DM3058 | Zisk U | Zisk I |
+|---|---|---|---|---|---|
+| 00AC4D02 | ch0 | 3,182 → 3,1852 V | 304 → 301 mA | 1,001006 | 0,990132 |
+| 00AC4D02 | ch1 | 3,126 → 3,1317 V | 305 → 301 mA | 1,001823 | 0,986885 |
+| 00AC4D02 | ch2 | 3,132 → 3,1354 V | 301 → 298 mA | 1,001086 | 0,990033 |
+| 00AC4D02 | ch3 | 3,403 → 3,4084 V | 324 → 318 mA | 1,001587 | 0,981481 |
+| 00A59BFD | ch0 | 3,591 → 3,5946 V | 326 → 316 mA | 1,001003 | 0,969325 |
+| 00A59BFD | ch1 | 3,593 → 3,5955 V | 322 → 318 mA | 1,000696 | 0,987578 |
+| 00A59BFD | ch2 | 3,586 → 3,5921 V | 316 → 313 mA | 1,001701 | 0,990506 |
+| 00A59BFD | ch3 | 3,590 → 3,5944 V | 327 → 320 mA | 1,001226 | 0,978593 |
 
-- Gauge měří napětí o 0,07–0,16 % nižší než UT804 a proud o 2,1–3,6 % vyšší.
-- Kalibrace je jednobodová, offset je 0. Proud byl kalibrovaný jen při vybíjení a stejný zisk se používá i pro nabíjecí proud.
+- Gauge měří napětí o 0,07–0,18 % nižší než DM3058 a proud o 1,0–3,2 % vyšší.
+- Kalibrace je jednobodová, offset je 0. Stejný zisk proudu se používá pro nabíjení i vybíjení.
+- Rozlišení gauge je 1 mA, takže při ≈ 300 mA je nejistota zisku proudu z jednoho bodu ≈ ±0,3 %.
+- Původní kalibrace prototypu 00A59BFD z 8. 11. 2026 (UNI-T UT804 bez kalibračního listu, proud 0,6–1,4 A) je v `calibration.csv` ponechaná jako komentář. Zisk proudu z ní se od nové liší až o 1,2 % (ch1). Výsledky před 13. 11. 2026 jsou tedy kalibrované jinak.
 
 ## Otevřené body
 
