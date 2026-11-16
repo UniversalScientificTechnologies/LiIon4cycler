@@ -123,7 +123,7 @@ Od 13. 11. 2026 se kalibruje stolním multimetrem **Rigol DM3058** (v. č. DM3L2
 | 00AC4D02 | ch0 | 3,182 → 3,1852 V | 304 → 301 mA | 1,001006 | 0,990132 |
 | 00AC4D02 | ch1 | 3,126 → 3,1317 V | 305 → 301 mA | 1,001823 | 0,986885 |
 | 00AC4D02 | ch2 | 3,132 → 3,1354 V | 301 → 298 mA | 1,001086 | 0,990033 |
-| 00AC4D02 | ch3 | 3,403 → 3,4084 V | 324 → 318 mA | 1,001587 | 0,981481 |
+| 00AC4D02 | ch3 | 3,375 → 3,3784 V | 292 → 285 mA | 1,001007 | 0,976027 |
 | 00A59BFD | ch0 | 3,591 → 3,5946 V | 326 → 316 mA | 1,001003 | 0,969325 |
 | 00A59BFD | ch1 | 3,593 → 3,5955 V | 322 → 318 mA | 1,000696 | 0,987578 |
 | 00A59BFD | ch2 | 3,586 → 3,5921 V | 316 → 313 mA | 1,001701 | 0,990506 |
@@ -132,7 +132,31 @@ Od 13. 11. 2026 se kalibruje stolním multimetrem **Rigol DM3058** (v. č. DM3L2
 - Gauge měří napětí o 0,07–0,18 % nižší než DM3058 a proud o 1,0–3,2 % vyšší.
 - Kalibrace je jednobodová, offset je 0. Stejný zisk proudu se používá pro nabíjení i vybíjení.
 - Rozlišení gauge je 1 mA, takže při ≈ 300 mA je nejistota zisku proudu z jednoho bodu ≈ ±0,3 %.
+- 00AC4D02 ch3 je od 16. 11. 2026 nová deska (viz níže), kalibrace z toho dne. Kalibrace původní desky (3,403 → 3,4084 V, 324 → 318 mA, zisky 1,001587 / 0,981481) je v `calibration.csv` jako komentář.
 - Původní kalibrace prototypu 00A59BFD z 8. 11. 2026 (UNI-T UT804 bez kalibračního listu, proud 0,6–1,4 A) je v `calibration.csv` ponechaná jako komentář. Zisk proudu z ní se od nové liší až o 1,2 % (ch1). Výsledky před 13. 11. 2026 jsou tedy kalibrované jinak.
+
+## Chyby jednotlivých kanálů (test prohozením článků)
+
+Tři po sobě jdoucí běhy na obou cyklerech: 13. 11. (A), 14. 11. (B) a 15. 11. 2026 (C), vše s kalibrací DM3058 a vybíjením do 2,5 V. V běhu B byly články prohozené mezi kanály 0↔1 a 2↔3, v bězích A a C byly na stejných místech. Každá veličina je proložená modelem *naměřeno = článek + kanál + běh*. Prohazovalo se jen ve dvojicích, takže se dá určit jen rozdíl ch1 − ch0 a ch3 − ch2, ne rozdíl mezi dvojicemi (0,1) a (2,3).
+
+| Cycler | Veličina | ch1 − ch0 | ch3 − ch2 | Rozptyl reziduí |
+|---|---|---|---|---|
+| 00A59BFD | kapacita | **+19 mAh (+0,56 %)** | +1 mAh | ≈ 1–2 mAh |
+| 00A59BFD | energie | +0,05 Wh | −0,01 Wh | 0,01 Wh |
+| 00A59BFD | R_dc | +12 ± 6 mΩ | +8 ± 6 mΩ | 7–10 mΩ |
+| 00AC4D02 | kapacita | −1 mAh | **−17 mAh (−0,5 %)** | ≈ 1–2 mAh |
+| 00AC4D02 | energie | 0 | **−0,14 Wh (−1,1 %)** | 0,01 Wh |
+| 00AC4D02 | R_dc | +3 mΩ | **+80 mΩ** | ≈ 3 mΩ |
+
+- **Příčina u 00AC4D02 ch3 (zjištěno 16. 11. 2026):** deska tohoto kanálu měla místo drátové pojistky polymerovou (PTC), která má podstatně větší odpor. Ch3 byl 16. 11. 2026 vyměněn za jinou desku s drátovou pojistkou a nově zkalibrován. Výsledky ch3 z dřívějších běhů jsou zatížené vyšším odporem. U ch2 (≈ +30 mΩ) zatím ověřit, jakou pojistku má.
+- **00AC4D02 ch3 má o ≈ 80 mΩ větší sériový odpor než ch2.** Odpor patří kanálu, ne článku: oba články na ch3 ukazují 212–220 mΩ a na ch2 135–140 mΩ. Ch2 má navíc proti ch0/ch1 zhruba +30 mΩ, protože stejné články LG MJ1 mají jinde ≈ 100 mΩ. Napětí se měří za kontakty, takže úbytek ≈ 28 mV při 350 mA snižuje naměřenou energii (−1,1 %). Kapacita je nižší (−0,5 %) pravděpodobně proto, že vybíjení dřív dosáhne konce 2,5 V. **Řešení je opravit hardware**, tj. zkontrolovat kontakt držáku, pájení a vodiče na ch3 (a ch2). Softwarovým odečtením odporu by se chyba kapacity a energie neodstranila.
+- **00A59BFD: ch1 dává o 0,56 % vyšší kapacitu než ch0.** Doba vybíjení stejného článku je na obou kanálech prakticky stejná (rozdíl ≈ 0,01 h, tj. na mezi zaokrouhlení). Skutečný proud je tedy stejný a jde o **chybu zisku měření proudu**: jednobodová kalibrace s rozlišením 1 mA má nejistotu ±0,3 % na kanál a ch0 má největší korekci (0,9693). Ze swapu nejde určit, který z kanálů je chybný. Opravit se má `I_gain` přesnější kalibrací (průměr více odečtů, proud ≈ 360 mA), ne empirickou korekcí kapacity.
+- Ostatní rozdíly (00A59BFD ch3 − ch2, 00AC4D02 ch1 − ch0) jsou v šumu a kompenzaci nepotřebují.
+- Vybíjecí proud se mezi kanály liší až o ≈ 3,5 % (00AC4D02 ch3 341–343 mA, ch2 353–355 mA). Je to vlastnost kanálu a na kapacitu má zanedbatelný vliv.
+- **Opakovatelnost:**
+  - Rozdíly mezi kanály v rámci jednoho běhu se opakují na 1–2 mAh.
+  - Celý běh se ale posouvá společně: A proti C o 22 mAh (00A59BFD, běh A začínal z jiného stavu) a o 9 mAh (00AC4D02). Absolutní kapacita je tedy mezi běhy opakovatelná na ≈ 0,3–0,6 %.
+- **R_dc u 00A59BFD kolísá po znovuvložení článku o ±10 mΩ** i při stejném osazení (ch0 96 → 83 mΩ, ch3 120 → 109 mΩ mezi A a C). U 00AC4D02 je to ≈ 3 mΩ. Kontakty v 00A59BFD tedy nejsou stabilní, a to se kompenzovat nedá.
 
 ## Otevřené body
 
